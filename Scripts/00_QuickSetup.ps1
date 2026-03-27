@@ -109,15 +109,19 @@ if (!(Get-AppxPackage -Name Microsoft.WindowsStore)) {
 
 # Winget (App Installer)
 if (!(Get-AppxPackage -Name Microsoft.DesktopAppInstaller)) {
-    Write-Log "Downloading and installing Winget..."
-    $wingetUrl = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
-    $wingetFile = "$env:TEMP\winget.msixbundle"
-    try {
-        Start-BitsTransfer -Source $wingetUrl -Destination $wingetFile -Priority High
-        Add-AppxPackage -Path $wingetFile -ForceApplicationShutdown
-        Write-Log "Winget installed successfully." "OK"
-    } catch {
-        Write-Log "Winget installation failed: $($_.Exception.Message)" "ERROR"
+    $wingetScript = "$PSScriptRoot\Install-Winget.ps1"
+    if (Test-Path $wingetScript) {
+        Write-Log "Running specialized Winget installer..."
+        & $wingetScript
+    } else {
+        Write-Log "Downloading basic Winget installer..."
+        $wingetUrl = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+        $wingetFile = "$env:TEMP\winget.msixbundle"
+        try {
+            Start-BitsTransfer -Source $wingetUrl -Destination $wingetFile -Priority High
+            Add-AppxPackage -Path $wingetFile -ForceApplicationShutdown
+            Write-Log "Winget installed successfully." "OK"
+        } catch { Write-Log "Winget installation failed." "ERROR" }
     }
 } else { Write-Log "Winget is already present." "OK" }
 
@@ -125,23 +129,29 @@ if (!(Get-AppxPackage -Name Microsoft.DesktopAppInstaller)) {
 # Step 3: Restore LTSC Missing Apps (Photos, Calculator, etc.)
 # ==============================================================================
 Show-Section "Specialized LTSC Components" 3 7
-$uwpApps = @(
-    @{Title='Photos'; Id='Microsoft.Windows.Photos'},
-    @{Title='Calculator'; Id='Microsoft.WindowsCalculator'},
-    @{Title='Paint'; Id='Microsoft.Paint'},
-    @{Title='Snipping Tool'; Id='Microsoft.ScreenSketch'},
-    @{Title='Windows Terminal'; Id='Microsoft.WindowsTerminal'}
-)
+$uwpScript = "$PSScriptRoot\Install-UWP-Apps.ps1"
+if (Test-Path $uwpScript) {
+    Write-Log "Running specialized UWP app restorer..."
+    & $uwpScript
+} else {
+    $uwpApps = @(
+        @{Title='Photos'; Id='Microsoft.Windows.Photos'},
+        @{Title='Calculator'; Id='Microsoft.WindowsCalculator'},
+        @{Title='Paint'; Id='Microsoft.Paint'},
+        @{Title='Snipping Tool'; Id='Microsoft.ScreenSketch'},
+        @{Title='Windows Terminal'; Id='Microsoft.WindowsTerminal'}
+    )
 
-foreach ($app in $uwpApps) {
-    Write-Host "  Checking $($app.Title)..." -ForegroundColor Gray
-    if (!(Get-AppxPackage -Name $app.Id -AllUsers)) {
-        Write-Log "Installing $($app.Title)..."
-        try {
-            winget install --id $app.Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null
-            if (Get-AppxPackage -Name $app.Id) { Write-Log "$($app.Title) restored." "OK" }
-        } catch { Write-Log "Failed to restore $($app.Title)." "WARN" }
-    } else { Write-Log "$($app.Title) is present." "OK" }
+    foreach ($app in $uwpApps) {
+        Write-Host "  Checking $($app.Title)..." -ForegroundColor Gray
+        if (!(Get-AppxPackage -Name $app.Id -AllUsers)) {
+            Write-Log "Installing $($app.Title)..."
+            try {
+                winget install --id $app.Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null
+                if (Get-AppxPackage -Name $app.Id) { Write-Log "$($app.Title) restored." "OK" }
+            } catch { Write-Log "Failed to restore $($app.Title)." "WARN" }
+        } else { Write-Log "$($app.Title) is present." "OK" }
+    }
 }
 
 # ==============================================================================

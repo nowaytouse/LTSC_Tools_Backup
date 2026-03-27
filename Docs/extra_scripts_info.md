@@ -1,280 +1,134 @@
-# 额外脚本说明
+# Specialized Scripts Information
 
-这些脚本来自 `D:\Backup\Downloads` 目录，提供了更多安装选项。
+These scripts provide advanced installation options beyond the basic setup, primarily focused on package managers and full development environments.
 
 ---
 
-## 📦 脚本列表
+## 📦 Script Catalog
 
 ### 01_bootstrap_ltsc.ps1
-**用途**：安装包管理器和基础依赖
+**Purpose**: Initializes package managers and core dependencies.
 
-**功能**：
-- ✅ 启用 TLS 1.2
-- ✅ 安装 NuGet 提供者
-- ✅ 更新 PowerShellGet
-- ✅ 安装 VCLibs 和 UI.Xaml（Winget 依赖）
-- ✅ 安装 Winget
-- ✅ 安装 Scoop（并添加 extras/versions/nerd-fonts buckets）
-- ✅ 安装 Chocolatey
-- ✅ 刷新 PATH 环境变量
+**Key Features**:
+- ✅ Enables TLS 1.2/1.3
+- ✅ Installs NuGet Provider
+- ✅ Updates PowerShellGet
+- ✅ Installs VCLibs and UI.Xaml (Winget Dependencies)
+- ✅ Installs Winget (App Installer)
+- ✅ Installs Scoop (with extras/versions/nerd-fonts buckets)
+- ✅ Installs Chocolatey
+- ✅ Refreshes PATH environment variables
 
-**使用方法**：
+**Usage**:
 ```powershell
-# 以管理员身份运行
+# Run as Administrator
 Set-ExecutionPolicy Bypass -Scope Process -Force
 .\01_bootstrap_ltsc.ps1
 ```
 
-**适用场景**：
-- 全新安装的 LTSC 系统
-- 需要 Scoop 和 Chocolatey 的用户
-- 作为其他安装脚本的前置步骤
+**Best For**:
+- Fresh LTSC installations.
+- Users requiring Scoop or Chocolatey.
+- Preparing the system for the full development environment.
 
 ---
 
 ### 02_install.ps1
-**用途**：Scoop 官方安装脚本
+**Purpose**: Official Scoop installation logic.
 
-**功能**：
-- 从 GitHub 克隆或下载 Scoop
-- 创建 Scoop shim（快捷方式）
-- 配置 Scoop 目录和缓存
-- 将 Scoop 添加到 PATH
+**Key Features**:
+- Clones/Downloads Scoop from GitHub.
+- Configures Scoop directories and cache.
+- Adds Scoop to the system PATH.
 
-**使用方法**：
+**Usage**:
 ```powershell
-# 普通用户安装
+# Standard Installation
 .\02_install.ps1
 
-# 自定义目录安装
+# Custom Directory Installation
 .\02_install.ps1 -ScoopDir "D:\Scoop" -ScoopGlobalDir "D:\Scoop\Global"
-
-# 使用代理安装
-.\02_install.ps1 -Proxy "http://proxy:8080"
 ```
-
-**参数说明**：
-- `-ScoopDir`: Scoop 根目录（默认：`$env:USERPROFILE\scoop`）
-- `-ScoopGlobalDir`: 全局应用目录（默认：`$env:ProgramData\scoop`）
-- `-ScoopCacheDir`: 缓存目录（默认：`$ScoopDir\cache`）
-- `-Proxy`: 代理地址
-- `-ProxyCredential`: 代理凭据
-- `-RunAsAdmin`: 强制以管理员运行（不推荐）
-
-**注意**：
-- 默认不需要管理员权限
-- 需要 PowerShell 5.0 或更高版本
-- 需要 .NET Framework 4.5+
 
 ---
 
 ### 03_install_windows.ps1
-**用途**：完整开发环境一键安装
+**Purpose**: All-in-one Master Development Environment Setup.
 
-**功能**：
-1. **包管理器检查**
-   - Scoop（自动安装）
-   - Winget（检查）
+**Key Features**:
+1. **Package Manager Validation**: Ensures Scoop and Winget are ready.
+2. **CLI Tools (via Scoop)**: 
+   - Dev: git, gh, node, python, go, zig, deno, fnm, cmake, ninja.
+   - Search: ripgrep (rg), fd.
+   - Media: ffmpeg, imagemagick, exiftool.
+   - Download: wget, aria2, yt-dlp.
+3. **GUI Applications (via Winget)**: Bitwarden, LocalSend, OpenJDK, Certbot.
+4. **Rust Toolchain**: Full Cargo installation with 17+ essential crates.
+5. **NPM & Pip Packages**: Global JS/Python tools for AI and Data Science (claude-code, numpy, pandas, torch).
+6. **AI Tools**: Ollama, Kimi-CLI, uv.
 
-2. **CLI 工具（通过 Scoop）**
-   - 开发：git, gh, node, python, go, zig, deno, fnm, cmake, ninja
-   - 文档：pandoc
-   - 搜索：ripgrep, fd
-   - 下载：wget, aria2, yt-dlp, gallery-dl
-   - 媒体：ffmpeg, imagemagick, exiftool
-   - 备份：restic
-   - 压缩：p7zip
-   - 工具：tree, sqlite, nasm, yasm, topgrade
-   - AI：ollama
-   - OCR：tesseract
-   - PDF：poppler
-   - 压缩算法：lz4, zstd, xz, brotli
-
-3. **GUI 应用（通过 Winget）**
-   - Bitwarden CLI
-   - LocalSend
-   - GnuPG
-   - OpenJDK
-   - Certbot
-
-4. **Rust 工具链**
-   - Rust + Cargo
-   - Cargo 包：bkmr, cargo-expand, cargo-audit 等 17 个工具
-
-5. **NPM 全局包**
-   - @anthropic-ai/claude-code
-   - acp-ts, lodash, openclaw
-   - opencode-ai, run-deepseek-cli, uipro-cli
-
-6. **Python pip 包**
-   - 数据科学：numpy, scipy, scikit-learn, pandas
-   - 图像处理：pillow, opencv-python
-   - AI/ML：torch, lightgbm, openvino
-   - 工具：flask, flask-cors, tqdm, joblib, sympy, networkx
-
-7. **UV 工具**
-   - uv 包管理器
-   - kimi-cli
-
-**使用方法**：
+**Usage**:
 ```powershell
-# 以管理员身份运行
+# Run as Administrator
 Set-ExecutionPolicy Bypass -Scope Process -Force
 .\03_install_windows.ps1
 ```
 
-**执行时间**：约 30-60 分钟（取决于网络速度）
-
-**适用场景**：
-- 开发环境快速搭建
-- 需要完整工具链的用户
-- AI/机器学习开发环境
-
-**注意**：
-- 需要稳定的网络连接
-- 需要约 10GB 磁盘空间
-- 部分工具仅支持 macOS（已跳过）
+**Execution Time**: Approx. 30-60 minutes depending on connection speed.
 
 ---
 
-## 🔀 脚本选择指南
+## 🔀 Script Selection Guide
 
-### 场景 1：只需要基础工具
+### Scenario 1: Basic Tools Only
+Use the master installer:
 ```powershell
-.\00_QuickInstall.ps1
+.\00_QuickSetup.ps1
 ```
 
-### 场景 2：需要 Scoop 和更多 CLI 工具
+### Scenario 2: Developer Environment (Scoop-focused)
 ```powershell
 .\01_bootstrap_ltsc.ps1
 .\03_install_windows.ps1
 ```
 
-### 场景 3：只需要 Winget 和常用软件
-```powershell
-# 使用原有脚本
-.\install_ltsc_essential.ps1
-```
+---
 
-### 场景 4：完整开发环境
-```powershell
-# 步骤 1：安装包管理器
-.\01_bootstrap_ltsc.ps1
+## 📊 Package Manager Comparison
 
-# 步骤 2：安装开发工具
-.\03_install_windows.ps1
-
-# 步骤 3：安装额外软件
-winget install <软件 ID>
-```
+| Feature | Winget | Scoop | Chocolatey |
+|---------|--------|-------|------------|
+| Source | Microsoft Official | Community | Community |
+| GUI Apps | ✅ | ❌ | ✅ |
+| CLI Tools | ⚠️ | ✅ | ✅ |
+| Speed | Fast | Fast | Moderate |
+| Admin Req | No | No | Yes |
+| Focus | General Apps | Dev Tools | Enterprise |
 
 ---
 
-## 📊 包管理器对比
+## 🛠️ Combined Usage Example
 
-| 特性 | Winget | Scoop | Chocolatey |
-|------|--------|-------|------------|
-| 来源 | 微软官方 | 社区 | 社区 |
-| GUI 应用 | ✅ | ❌ | ✅ |
-| CLI 工具 | ⚠️ | ✅ | ✅ |
-| 开发者工具 | ⚠️ | ✅ | ✅ |
-| 安装速度 | 快 | 快 | 中 |
-| 需要管理员 | 否 | 否 | 是 |
-| 推荐用途 | 日常软件 | 开发工具 | 企业软件 |
-
----
-
-## 🛠️ 组合使用示例
-
-### 最小化安装
+### Minimal Dev Install
 ```powershell
-# 1. 安装包管理器
+# 1. Bootstrap Managers
 .\01_bootstrap_ltsc.ps1
 
-# 2. 安装必要工具
+# 2. Install Essentials
 scoop install git nodejs-lts python
-
-# 3. 安装日常软件
-winget install 7zip.Google.Chrome
-```
-
-### 完整开发环境
-```powershell
-# 1. 安装所有包管理器
-.\01_bootstrap_ltsc.ps1
-
-# 2. 安装完整开发工具
-.\03_install_windows.ps1
-
-# 3. 验证安装
-winget --version
-scoop --version
-choco --version
-git --version
-node --version
-python --version
+winget install 7zip.7zip Google.Chrome
 ```
 
 ---
 
-## ⚠️ 注意事项
+## ⚠️ Important Considerations
 
-1. **网络要求**
-   - 所有脚本都需要稳定的网络连接
-   - 建议使用有线连接或稳定的 WiFi
-   - 如遇下载失败，检查代理设置
-
-2. **磁盘空间**
-   - 最小安装：2GB
-   - 完整开发环境：10GB+
-   - 建议预留 20GB 空间
-
-3. **执行权限**
-   ```powershell
-   # 临时允许脚本执行
-   Set-ExecutionPolicy Bypass -Scope Process -Force
-   
-   # 恢复默认设置（安装后）
-   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-   ```
-
-4. **PATH 刷新**
-   - 安装完成后重启终端
-   - 或运行：`refreshenv`（Chocolatey）
-   - 或重新登录 Windows
+1. **Network Stability**: A stable connection is vital as GBs of data will be downloaded.
+2. **Disk Space**:
+   - Minimal Setup: ~2GB
+   - Full Dev Setup: 10GB+
+3. **PATH Refresh**: Always restart your terminal (or run `refreshenv`) after manager installation to detect new commands.
 
 ---
 
-## 🔧 故障排查
-
-### Scoop 安装失败
-```powershell
-# 检查 PowerShell 版本
-$PSVersionTable.PSVersion
-
-# 检查执行策略
-Get-ExecutionPolicy
-
-# 手动安装 Scoop
-Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-```
-
-### Winget 不可用
-```powershell
-# 检查是否安装
-Get-AppxPackage -Name Microsoft.DesktopAppInstaller
-
-# 从商店安装
-start ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1
-```
-
-### PATH 未更新
-```powershell
-# 刷新环境变量
-$env:PATH = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-```
-
----
-
-*文档更新时间：2026-03-25*
+*Documentation Updated: March 28, 2026*

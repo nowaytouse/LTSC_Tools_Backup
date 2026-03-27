@@ -135,14 +135,16 @@ if ($Mode -eq "Optimized" -or $Mode -eq "Extreme") {
         Disable-NetAdapterPowerManagement -Name $nic.Name -ErrorAction SilentlyContinue
         
         if ($Mode -eq "Extreme") {
+            # Low Latency & High Performance Adapter Settings
+            # Fallback names included for localized Windows versions (e.g., Chinese)
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Interrupt Moderation", "中断节流") -Values @("Disabled", "已禁用")
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Receive Buffers", "接收缓冲区") -Values @("4096", "2048")
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Transmit Buffers", "传输缓冲区") -Values @("4096", "2048")
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Flow Control", "流控制") -Values @("Disabled", "已禁用")
         }
 
-        # WLAN Specific
-        if ($nic.Name -match "WLAN|Wi-Fi|无线") {
+        # WLAN / Wi-Fi Specific Optimizations
+        if ($nic.Name -match "WLAN|Wi-Fi|Wireless|无线") {
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Throughput Booster", "吞吐量 booster") -Values @("Enabled", "已启用")
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Roaming Aggressiveness", "漫游主动性") -Values @("1. Lowest", "1. 最低")
             Set-AdapterProperty -AdapterName $nic.Name -Names @("Transmit Power", "传输功率") -Values @("5. Highest", "5. 最高")
