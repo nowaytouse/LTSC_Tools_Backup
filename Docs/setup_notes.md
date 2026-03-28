@@ -32,7 +32,7 @@ LTSC versions typically lack:
 - Network stack requires modern tuning for LTSC.
 
 **Solutions**:
-Implemented in `Optimize-Network.ps1` and `00_QuickSetup.ps1`.
+Implemented directly in `00_QuickSetup.ps1`.
 
 ### 1.3 Winget Installation Failures
 **Symptoms**:
@@ -50,7 +50,7 @@ Implemented in `Optimize-Network.ps1` and `00_QuickSetup.ps1`.
 ### 2.1 Core Component Order
 
 #### Step 1: Network Repair
-Run `Optimize-Network.ps1` to ensure stable HTTPS connectivity.
+Run `00_QuickSetup.ps1`; it now includes the network repair and tuning stage internally.
 
 #### Step 2: Establish Store & Winget
 - Trigger Store installation via `wsreset -i`.

@@ -20,6 +20,7 @@ D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1
 - installs developer toolchains and package ecosystems
 - installs PowerShell 7
 - applies common LTSC tweaks
+- runs a final component audit summary
 
 ## Optional Flags
 
@@ -29,14 +30,7 @@ D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
 D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
 ```
 
-## Legacy Scripts
-
-These remain in `Scripts\` for reference only:
-
-- `01_bootstrap_ltsc.ps1`
-- `03_install_windows.ps1`
-
-They are no longer required, and `00_QuickSetup.ps1` does not call them.
+`Scripts\` now contains only `00_QuickSetup.ps1`.
 
 ## After The Run
 

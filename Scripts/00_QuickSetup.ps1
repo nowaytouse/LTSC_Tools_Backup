@@ -28,7 +28,7 @@ if (-not (Test-Path $script:LogDir)) {
 }
 $script:LogFile = Join-Path $script:LogDir ("setup_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
 $script:StepIndex = 0
-$script:StepTotal = if ($SkipDevTools) { 7 } else { 13 }
+$script:StepTotal = if ($SkipDevTools) { 9 } else { 15 }
 
 function Write-Log {
     param(
@@ -114,6 +114,33 @@ function Ensure-MicrosoftStore {
         }
     } catch {
         Write-Log ("Microsoft Store installation failed: {0}" -f $_.Exception.Message) "WARN"
+    }
+}
+
+function Repair-StoreVisibility {
+    $store = Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue
+    if (-not $store) {
+        Write-Log "Skipped Store visibility repair because Store is not installed." "WARN"
+        return
+    }
+
+    try {
+        $manifestPath = Join-Path $store.InstallLocation "AppxManifest.xml"
+        if (Test-Path $manifestPath) {
+            Add-AppxPackage -Register $manifestPath -DisableDevelopmentMode -ForceApplicationShutdown -ErrorAction Stop
+            Write-Log "Re-registered Microsoft Store package." "OK"
+        }
+    } catch {
+        Write-Log ("Store re-registration skipped: {0}" -f $_.Exception.Message) "WARN"
+    }
+
+    try {
+        if (Get-Process ShellExperienceHost -ErrorAction SilentlyContinue) {
+            Stop-Process -Name ShellExperienceHost -Force -ErrorAction SilentlyContinue
+            Write-Log "Restarted ShellExperienceHost to refresh Start menu visibility." "OK"
+        }
+    } catch {
+        Write-Log ("Shell refresh skipped: {0}" -f $_.Exception.Message) "WARN"
     }
 }
 
@@ -223,12 +250,9 @@ function Ensure-Scoop {
 
     try {
         Write-Log "Installing Scoop..."
-        $scoopInstaller = Join-Path $PSScriptRoot "02_install.ps1"
-        if (Test-Path $scoopInstaller) {
-            & $scoopInstaller -RunAsAdmin
-        } else {
-            Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
-        }
+        $installerFile = Join-Path $env:TEMP "install_scoop.ps1"
+        Invoke-WebRequest -Uri "https://get.scoop.sh" -OutFile $installerFile -UseBasicParsing
+        & $installerFile -RunAsAdmin
         Refresh-PathEnvironment
         if (Test-CommandAvailable "scoop") {
             foreach ($bucket in @("extras", "versions", "nerd-fonts")) {
@@ -276,7 +300,6 @@ function Ensure-UwpApps {
         @{ Title = "Calculator"; Id = "Microsoft.WindowsCalculator" },
         @{ Title = "Paint"; Id = "Microsoft.Paint" },
         @{ Title = "Snipping Tool"; Id = "Microsoft.ScreenSketch" },
-        @{ Title = "Photos"; Id = "Microsoft.Windows.Photos" },
         @{ Title = "Alarms & Clock"; Id = "Microsoft.WindowsAlarms" },
         @{ Title = "Windows Camera"; Id = "Microsoft.WindowsCamera" },
         @{ Title = "Xbox Game Bar"; Id = "Microsoft.XboxGamingOverlay" },
@@ -655,6 +678,42 @@ function Apply-SystemTweaks {
     }
 }
 
+function Write-ComponentAuditSummary {
+    $checks = @(
+        @{ Name = "Microsoft Store"; Check = { Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue } },
+        @{ Name = "Winget"; Check = { Get-Command winget -ErrorAction SilentlyContinue } },
+        @{ Name = "Scoop"; Check = { Get-Command scoop -ErrorAction SilentlyContinue } },
+        @{ Name = "Chocolatey"; Check = { Get-Command choco -ErrorAction SilentlyContinue } },
+        @{ Name = "Photos App"; Check = { Get-AppxPackage -Name Microsoft.Windows.Photos -ErrorAction SilentlyContinue } },
+        @{ Name = "Calculator"; Check = { Get-AppxPackage -Name Microsoft.WindowsCalculator -ErrorAction SilentlyContinue } },
+        @{ Name = "Paint"; Check = { Get-AppxPackage -Name Microsoft.Paint -ErrorAction SilentlyContinue } },
+        @{ Name = "Snipping Tool"; Check = { Get-AppxPackage -Name Microsoft.ScreenSketch -ErrorAction SilentlyContinue } },
+        @{ Name = "Windows Terminal"; Check = { Get-AppxPackage -Name Microsoft.WindowsTerminal -ErrorAction SilentlyContinue } },
+        @{ Name = "PowerShell 7"; Check = { Test-Path "$env:ProgramFiles\PowerShell\7\pwsh.exe" } },
+        @{ Name = "Windows Sandbox"; Check = { Get-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Enabled" } } },
+        @{ Name = "WSL"; Check = { Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Enabled" } } }
+    )
+
+    $present = New-Object System.Collections.Generic.List[string]
+    $missing = New-Object System.Collections.Generic.List[string]
+    foreach ($check in $checks) {
+        try {
+            if (& $check.Check) {
+                $present.Add($check.Name)
+            } else {
+                $missing.Add($check.Name)
+            }
+        } catch {
+            $missing.Add($check.Name)
+        }
+    }
+
+    Write-Log ("Audit summary: present {0}, missing {1}" -f $present.Count, $missing.Count) "INFO"
+    if ($missing.Count -gt 0) {
+        Write-Log ("Missing or disabled items: {0}" -f ($missing -join ", ")) "WARN"
+    }
+}
+
 $coreApps = @(
     @{ Id = "7zip.7zip"; Name = "7-Zip" },
     @{ Id = "VideoLAN.VLC"; Name = "VLC Media Player" },
@@ -726,6 +785,9 @@ Ensure-Scoop
 Ensure-Chocolatey
 Refresh-PathEnvironment
 
+Show-Step "Store Registration Repair"
+Repair-StoreVisibility
+
 Show-Step "LTSC Built-In Apps Restore"
 Ensure-UwpApps
 
@@ -761,6 +823,9 @@ Ensure-PowerShell7
 
 Show-Step "System Tweaks"
 Apply-SystemTweaks
+
+Show-Step "Final Component Audit"
+Write-ComponentAuditSummary
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan

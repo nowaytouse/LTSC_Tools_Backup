@@ -1,6 +1,6 @@
 # Windows LTSC One-Click Setup Backup
 
-This repository is now centered on a single standalone script that can bootstrap a fresh LTSC machine from package managers to developer tooling.
+This repository is now centered on a single standalone script that bootstraps a fresh LTSC machine from package managers to developer tooling.
 
 ## Quick Start
 
@@ -39,9 +39,6 @@ If you want the same script to do less, use these switches:
 LTSC_Tools_Backup/
 ├── Scripts/
 │   ├── 00_QuickSetup.ps1        # Main standalone one-click setup script
-│   ├── 01_bootstrap_ltsc.ps1    # Legacy standalone bootstrap flow
-│   ├── 03_install_windows.ps1   # Legacy standalone dev environment flow
-│   └── (other legacy helpers)
 ├── Docs/
 ├── Logs/
 └── START_HERE.md
@@ -49,17 +46,11 @@ LTSC_Tools_Backup/
 
 ## Current Flow
 
-The old manual sequence:
-
-1. `00_QuickSetup.ps1`
-2. `01_bootstrap_ltsc.ps1`
-3. `03_install_windows.ps1`
-
-has been merged into one actual runnable file:
+Everything is now merged into one actual runnable file:
 
 1. `00_QuickSetup.ps1`
 
-The older scripts are kept only as references. `00_QuickSetup.ps1` no longer depends on them.
+The old helper and legacy setup scripts have been removed from `Scripts\`.
 
 ## Notes
 
