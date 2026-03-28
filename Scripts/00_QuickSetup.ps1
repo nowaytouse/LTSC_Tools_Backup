@@ -72,21 +72,6 @@ function Test-CommandAvailable {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
-function Invoke-ScriptIfPresent {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [string[]]$ArgumentList = @()
-    )
-
-    if (-not (Test-Path $Path)) {
-        Write-Log ("Skipped missing helper script: {0}" -f (Split-Path -Leaf $Path)) "WARN"
-        return $false
-    }
-
-    & $Path @ArgumentList
-    return $true
-}
-
 function Install-PackageProviderIfMissing {
     try {
         $nugetProvider = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
@@ -183,14 +168,43 @@ function Ensure-Winget {
 
     Ensure-WingetDependencies
 
-    $installerPath = Join-Path $PSScriptRoot "Install-Winget.ps1"
-    if (Test-Path $installerPath) {
-        Write-Log "Running Winget installer helper..."
+    $tempDir = Join-Path $env:TEMP "WingetSetup"
+    if (-not (Test-Path $tempDir)) {
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    }
+    $bundleFile = Join-Path $tempDir "winget.msixbundle"
+    $sources = @(
+        "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
+        "https://mirror.ghproxy.com/https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
+        "https://ghproxy.net/https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
+        "https://github.moeyy.xyz/https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+    )
+
+    $downloaded = $false
+    foreach ($source in $sources) {
         try {
-            & $installerPath
+            Write-Log ("Downloading Winget bundle from {0}" -f $source)
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+            $wc.DownloadFile($source, $bundleFile)
+            if ((Test-Path $bundleFile) -and ((Get-Item $bundleFile).Length -gt 50MB)) {
+                $downloaded = $true
+                break
+            }
         } catch {
-            Write-Log ("Winget helper reported an error: {0}" -f $_.Exception.Message) "WARN"
+            Write-Log ("Winget source failed: {0}" -f $_.Exception.Message) "WARN"
         }
+    }
+
+    if ($downloaded) {
+        try {
+            Add-AppxPackage -Path $bundleFile -ForceApplicationShutdown -ErrorAction Stop
+            Write-Log "Winget package installed." "OK"
+        } catch {
+            Write-Log ("Winget package install failed: {0}" -f $_.Exception.Message) "WARN"
+        }
+    } else {
+        Write-Log "All Winget download mirrors failed." "WARN"
     }
 
     Refresh-PathEnvironment
@@ -252,12 +266,6 @@ function Ensure-Chocolatey {
 }
 
 function Ensure-UwpApps {
-    $uwpScript = Join-Path $PSScriptRoot "Install-UWP-Apps.ps1"
-    if (Invoke-ScriptIfPresent -Path $uwpScript) {
-        Write-Log "UWP restore helper finished." "OK"
-        return
-    }
-
     if (-not (Test-CommandAvailable "winget")) {
         Write-Log "Skipped UWP restore because Winget is unavailable." "WARN"
         return
@@ -268,7 +276,18 @@ function Ensure-UwpApps {
         @{ Title = "Calculator"; Id = "Microsoft.WindowsCalculator" },
         @{ Title = "Paint"; Id = "Microsoft.Paint" },
         @{ Title = "Snipping Tool"; Id = "Microsoft.ScreenSketch" },
+        @{ Title = "Photos"; Id = "Microsoft.Windows.Photos" },
+        @{ Title = "Alarms & Clock"; Id = "Microsoft.WindowsAlarms" },
+        @{ Title = "Windows Camera"; Id = "Microsoft.WindowsCamera" },
+        @{ Title = "Xbox Game Bar"; Id = "Microsoft.XboxGamingOverlay" },
         @{ Title = "Windows Terminal"; Id = "Microsoft.WindowsTerminal" }
+    )
+
+    $alternatives = @(
+        @{ Title = "ShareX"; Id = "ShareX.ShareX" },
+        @{ Title = "IrfanView"; Id = "IrfanSkiljan.IrfanView" },
+        @{ Title = "Paint.NET"; Id = "dotPDN.Paint.NET" },
+        @{ Title = "Q-Dir"; Id = "QDir.QDir" }
     )
 
     foreach ($app in $uwpApps) {
@@ -283,6 +302,90 @@ function Ensure-UwpApps {
             Write-Log ("Completed install request for {0}." -f $app.Title) "OK"
         } catch {
             Write-Log ("Failed to restore {0}: {1}" -f $app.Title, $_.Exception.Message) "WARN"
+        }
+    }
+
+    foreach ($app in $alternatives) {
+        $existing = winget list --id $app.Id -e 2>$null | Select-String $app.Id
+        if ($existing) {
+            Write-Log ("Alternative already installed: {0}" -f $app.Title) "OK"
+            continue
+        }
+
+        try {
+            Write-Log ("Installing alternative app: {0}" -f $app.Title)
+            winget install --id $app.Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
+            Write-Log ("Installed alternative app: {0}" -f $app.Title) "OK"
+        } catch {
+            Write-Log ("Failed alternative app install for {0}: {1}" -f $app.Title, $_.Exception.Message) "WARN"
+        }
+    }
+}
+
+function Invoke-NetworkOptimization {
+    param(
+        [ValidateSet("Basic", "Optimized", "Extreme")]
+        [string]$Mode = "Optimized"
+    )
+
+    foreach ($proto in @("TLS 1.2", "TLS 1.3")) {
+        foreach ($side in @("Client", "Server")) {
+            $path = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\$proto\$side"
+            if (-not (Test-Path $path)) {
+                New-Item -Path $path -Force | Out-Null
+            }
+            New-ItemProperty -Path $path -Name "Enabled" -Value 1 -PropertyType DWORD -Force | Out-Null
+            New-ItemProperty -Path $path -Name "DisabledByDefault" -Value 0 -PropertyType DWORD -Force | Out-Null
+        }
+    }
+    Write-Log "Enabled TLS 1.2/1.3 client and server profiles." "OK"
+
+    try {
+        $activeInterface = Get-NetConnectionProfile | Where-Object { $_.IPv4Connectivity -eq "Internet" } | Select-Object -First 1
+        if ($activeInterface) {
+            Set-DnsClientServerAddress -InterfaceAlias $activeInterface.InterfaceAlias -ServerAddresses ("1.1.1.1", "8.8.8.8", "223.5.5.5")
+            Write-Log ("Configured DNS for {0}." -f $activeInterface.InterfaceAlias) "OK"
+        }
+    } catch {
+        Write-Log ("DNS optimization skipped: {0}" -f $_.Exception.Message) "WARN"
+    }
+
+    try {
+        netsh winsock reset | Out-Null
+        netsh int ip reset | Out-Null
+        netsh winhttp reset proxy | Out-Null
+        ipconfig /flushdns | Out-Null
+        Write-Log "Reset Winsock, IP stack, proxy, and DNS cache." "OK"
+    } catch {
+        Write-Log ("Network reset encountered a warning: {0}" -f $_.Exception.Message) "WARN"
+    }
+
+    if ($Mode -in @("Optimized", "Extreme")) {
+        try {
+            if ($Mode -eq "Extreme") {
+                netsh int tcp set global autotuninglevel=experimental | Out-Null
+                netsh int tcp set global ecncapability=enabled | Out-Null
+                netsh int tcp set global initialrto=300 | Out-Null
+                netsh int tcp set global maxsynretransmissions=3 | Out-Null
+                netsh int tcp set global pacingprofile=always | Out-Null
+            } else {
+                netsh int tcp set global autotuninglevel=normal | Out-Null
+                netsh int tcp set global ecncapability=enabled | Out-Null
+            }
+
+            netsh int tcp set global timestamps=disabled | Out-Null
+            netsh int tcp set global rss=enabled | Out-Null
+            netsh int tcp set global rsc=enabled | Out-Null
+            netsh int tcp set global nonsackrttresiliency=enabled | Out-Null
+            Set-NetTCPSetting -SettingAlias Internet -CongestionProvider CTCP -ErrorAction SilentlyContinue
+
+            $adapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "Up" }
+            foreach ($nic in $adapters) {
+                Disable-NetAdapterPowerManagement -Name $nic.Name -ErrorAction SilentlyContinue
+            }
+            Write-Log ("Applied {0} network tuning." -f $Mode) "OK"
+        } catch {
+            Write-Log ("Advanced network tuning skipped: {0}" -f $_.Exception.Message) "WARN"
         }
     }
 }
@@ -609,19 +712,7 @@ Write-Log "Starting unified LTSC setup..." "START"
 
 Show-Step "Network Repair And Download Hardening"
 try {
-    $networkScript = Join-Path $PSScriptRoot "Optimize-Network.ps1"
-    if (Test-Path $networkScript) {
-        Write-Log "Running network optimizer..."
-        & $networkScript -Mode Optimized
-        Write-Log "Network optimization completed." "OK"
-    } else {
-        $tlsPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
-        if (-not (Test-Path $tlsPath)) {
-            New-Item -Path $tlsPath -Force | Out-Null
-        }
-        Set-ItemProperty -Path $tlsPath -Name "Enabled" -Value 1 -Force | Out-Null
-        Write-Log "Applied basic TLS 1.2 fallback." "OK"
-    }
+    Invoke-NetworkOptimization -Mode Optimized
 } catch {
     Write-Log ("Network step encountered a warning: {0}" -f $_.Exception.Message) "WARN"
 }

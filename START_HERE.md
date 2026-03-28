@@ -2,7 +2,7 @@
 
 ## One Command
 
-Use only this script in an elevated PowerShell window:
+Use only this one script in an elevated PowerShell window:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -11,7 +11,7 @@ D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1
 
 ## What It Does
 
-`00_QuickSetup.ps1` now combines the old multi-step process into one run:
+`00_QuickSetup.ps1` now combines the old multi-step process into one standalone file and one run:
 
 - fixes network and TLS issues
 - installs Store, Winget, Scoop, and Chocolatey
@@ -36,7 +36,7 @@ These remain in `Scripts\` for reference only:
 - `01_bootstrap_ltsc.ps1`
 - `03_install_windows.ps1`
 
-They are no longer required for a standard rebuild.
+They are no longer required, and `00_QuickSetup.ps1` does not call them.
 
 ## After The Run
 

@@ -1,6 +1,6 @@
 # Windows LTSC One-Click Setup Backup
 
-This repository is now centered on a single entry script that can bootstrap a fresh LTSC machine from package managers to developer tooling.
+This repository is now centered on a single standalone script that can bootstrap a fresh LTSC machine from package managers to developer tooling.
 
 ## Quick Start
 
@@ -11,7 +11,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 .\Scripts\00_QuickSetup.ps1
 ```
 
-That single command now covers:
+That single script now covers:
 
 - Network repair and TLS hardening
 - Microsoft Store and Winget bootstrap
@@ -38,12 +38,10 @@ If you want the same script to do less, use these switches:
 ```text
 LTSC_Tools_Backup/
 ├── Scripts/
-│   ├── 00_QuickSetup.ps1        # Main one-click setup entrypoint
-│   ├── Install-Winget.ps1       # Winget helper
-│   ├── Install-UWP-Apps.ps1     # LTSC app restore helper
-│   ├── Optimize-Network.ps1     # Network optimization helper
+│   ├── 00_QuickSetup.ps1        # Main standalone one-click setup script
 │   ├── 01_bootstrap_ltsc.ps1    # Legacy standalone bootstrap flow
-│   └── 03_install_windows.ps1   # Legacy standalone dev environment flow
+│   ├── 03_install_windows.ps1   # Legacy standalone dev environment flow
+│   └── (other legacy helpers)
 ├── Docs/
 ├── Logs/
 └── START_HERE.md
@@ -57,11 +55,11 @@ The old manual sequence:
 2. `01_bootstrap_ltsc.ps1`
 3. `03_install_windows.ps1`
 
-has been merged into:
+has been merged into one actual runnable file:
 
 1. `00_QuickSetup.ps1`
 
-The older scripts are kept as fallback references, but they are no longer required for a normal rebuild.
+The older scripts are kept only as references. `00_QuickSetup.ps1` no longer depends on them.
 
 ## Notes
 
