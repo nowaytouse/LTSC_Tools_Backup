@@ -3,9 +3,9 @@
 .SYNOPSIS
     Windows LTSC one-click full setup script.
 .DESCRIPTION
-    Consolidates the old multi-step flow into a single entrypoint:
-    network repair, Store/Winget bootstrap, package managers, core apps,
-    developer toolchains, PowerShell 7, and system tweaks.
+    Single-entry LTSC rebuild script covering network repair, Store/Winget
+    bootstrap, package managers, core apps, developer toolchains,
+    PowerShell 7, and system tweaks.
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\Scripts\00_QuickSetup.ps1
 .EXAMPLE
@@ -15,7 +15,9 @@
 param(
     [switch]$SkipDevTools,
     [switch]$SkipOptionalFeatures,
-    [switch]$SkipSystemTweaks
+    [switch]$SkipSystemTweaks,
+    [ValidateSet("Basic", "Optimized", "Extreme")]
+    [string]$NetworkMode = "Optimized"
 )
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
@@ -70,6 +72,106 @@ function Test-Admin {
 function Test-CommandAvailable {
     param([Parameter(Mandatory = $true)][string]$Name)
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Install-WingetPackage {
+    param(
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if (-not (Test-CommandAvailable "winget")) {
+        Write-Log ("Skipped {0}; Winget is unavailable." -f $Name) "WARN"
+        return
+    }
+
+    $existing = winget list --id $Id -e 2>$null | Select-String $Id
+    if ($existing) {
+        Write-Log ("{0} is already installed." -f $Name) "OK"
+        return
+    }
+
+    try {
+        Write-Log ("Installing {0}..." -f $Name)
+        winget install --id $Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
+        Write-Log ("Installed {0}." -f $Name) "OK"
+    } catch {
+        Write-Log ("Failed to install {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+    }
+}
+
+function Install-ScoopPackage {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if (-not (Test-CommandAvailable "scoop")) {
+        Write-Log ("Skipped {0}; Scoop is unavailable." -f $Name) "WARN"
+        return
+    }
+
+    try {
+        $scoopStatus = scoop list 2>$null | Select-String ("^" + [regex]::Escape($Name) + "\s")
+        if ($scoopStatus) {
+            Write-Log ("Scoop package already installed: {0}" -f $Name) "OK"
+            return
+        }
+
+        Write-Log ("Installing Scoop package: {0}" -f $Name)
+        scoop install $Name 2>$null | Out-Null
+        Write-Log ("Installed Scoop package: {0}" -f $Name) "OK"
+    } catch {
+        Write-Log ("Failed Scoop install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+    }
+}
+
+function Install-CargoPackage {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if (-not (Test-CommandAvailable "cargo")) {
+        Write-Log ("Skipped {0}; cargo is unavailable." -f $Name) "WARN"
+        return
+    }
+
+    try {
+        Write-Log ("Installing cargo package: {0}" -f $Name)
+        cargo install $Name 2>$null | Out-Null
+        Write-Log ("Cargo package processed: {0}" -f $Name) "OK"
+    } catch {
+        Write-Log ("Failed cargo install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+    }
+}
+
+function Install-NpmGlobalPackage {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if (-not (Test-CommandAvailable "npm")) {
+        Write-Log ("Skipped {0}; npm is unavailable." -f $Name) "WARN"
+        return
+    }
+
+    try {
+        Write-Log ("Installing NPM global package: {0}" -f $Name)
+        npm install -g $Name 2>$null | Out-Null
+        Write-Log ("Installed NPM global package: {0}" -f $Name) "OK"
+    } catch {
+        Write-Log ("Failed npm install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+    }
+}
+
+function Install-PipPackage {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    if (-not (Test-CommandAvailable "pip")) {
+        Write-Log ("Skipped {0}; pip is unavailable." -f $Name) "WARN"
+        return
+    }
+
+    try {
+        Write-Log ("Installing pip package: {0}" -f $Name)
+        pip install $Name --quiet 2>$null | Out-Null
+        Write-Log ("Installed pip package: {0}" -f $Name) "OK"
+    } catch {
+        Write-Log ("Failed pip install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+    }
 }
 
 function Install-PackageProviderIfMissing {
@@ -253,6 +355,7 @@ function Ensure-Scoop {
         $installerFile = Join-Path $env:TEMP "install_scoop.ps1"
         Invoke-WebRequest -Uri "https://get.scoop.sh" -OutFile $installerFile -UseBasicParsing
         & $installerFile -RunAsAdmin
+        Remove-Item $installerFile -Force -ErrorAction SilentlyContinue
         Refresh-PathEnvironment
         if (Test-CommandAvailable "scoop") {
             foreach ($bucket in @("extras", "versions", "nerd-fonts")) {
@@ -451,19 +554,7 @@ function Install-WingetPackages {
     }
 
     foreach ($package in $Packages) {
-        $existing = winget list --id $package.Id -e 2>$null | Select-String $package.Id
-        if ($existing) {
-            Write-Log ("{0} is already installed." -f $package.Name) "OK"
-            continue
-        }
-
-        try {
-            Write-Log ("Installing {0}..." -f $package.Name)
-            winget install --id $package.Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
-            Write-Log ("Installed {0}." -f $package.Name) "OK"
-        } catch {
-            Write-Log ("Failed to install {0}: {1}" -f $package.Name, $_.Exception.Message) "WARN"
-        }
+        Install-WingetPackage -Id $package.Id -Name $package.Name
     }
 }
 
@@ -476,19 +567,7 @@ function Install-ScoopPackages {
     }
 
     foreach ($package in $Packages) {
-        try {
-            $scoopStatus = scoop list 2>$null | Select-String ("^" + [regex]::Escape($package) + "\s")
-            if ($scoopStatus) {
-                Write-Log ("Scoop package already installed: {0}" -f $package) "OK"
-                continue
-            }
-
-            Write-Log ("Installing Scoop package: {0}" -f $package)
-            scoop install $package 2>$null | Out-Null
-            Write-Log ("Installed Scoop package: {0}" -f $package) "OK"
-        } catch {
-            Write-Log ("Failed Scoop install for {0}: {1}" -f $package, $_.Exception.Message) "WARN"
-        }
+        Install-ScoopPackage -Name $package
     }
 }
 
@@ -540,13 +619,7 @@ function Install-CargoPackages {
     }
 
     foreach ($package in $Packages) {
-        try {
-            Write-Log ("Installing cargo package: {0}" -f $package)
-            cargo install $package 2>$null | Out-Null
-            Write-Log ("Cargo package processed: {0}" -f $package) "OK"
-        } catch {
-            Write-Log ("Failed cargo install for {0}: {1}" -f $package, $_.Exception.Message) "WARN"
-        }
+        Install-CargoPackage -Name $package
     }
 }
 
@@ -559,13 +632,7 @@ function Install-NpmGlobals {
     }
 
     foreach ($package in $Packages) {
-        try {
-            Write-Log ("Installing NPM global package: {0}" -f $package)
-            npm install -g $package 2>$null | Out-Null
-            Write-Log ("Installed NPM global package: {0}" -f $package) "OK"
-        } catch {
-            Write-Log ("Failed npm install for {0}: {1}" -f $package, $_.Exception.Message) "WARN"
-        }
+        Install-NpmGlobalPackage -Name $package
     }
 }
 
@@ -578,13 +645,7 @@ function Install-PipPackages {
     }
 
     foreach ($package in $Packages) {
-        try {
-            Write-Log ("Installing pip package: {0}" -f $package)
-            pip install $package --quiet 2>$null | Out-Null
-            Write-Log ("Installed pip package: {0}" -f $package) "OK"
-        } catch {
-            Write-Log ("Failed pip install for {0}: {1}" -f $package, $_.Exception.Message) "WARN"
-        }
+        Install-PipPackage -Name $package
     }
 }
 
@@ -756,10 +817,21 @@ $pipPackages = @(
     "sympy", "networkx", "PyWavelets", "certifi", "cryptography", "filelock", "fsspec"
 )
 
+$script:ConfigurationSummary = [ordered]@{
+    NetworkMode = $NetworkMode
+    CoreDesktopApps = $coreApps.Count
+    DevWingetApps = $devWingetApps.Count
+    ScoopPackages = $scoopTools.Count
+    CargoPackages = $cargoPackages.Count
+    NpmPackages = $npmPackages.Count
+    PipPackages = $pipPackages.Count
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Windows LTSC One-Click Full Setup" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
+Write-Log ("Configuration profile: {0}" -f (($script:ConfigurationSummary.GetEnumerator() | ForEach-Object { "{0}={1}" -f $_.Key, $_.Value }) -join "; ")) "INFO"
 
 if (-not (Test-Admin)) {
     Write-Host "[!] This script requires Administrator privileges." -ForegroundColor Red
@@ -771,7 +843,7 @@ Write-Log "Starting unified LTSC setup..." "START"
 
 Show-Step "Network Repair And Download Hardening"
 try {
-    Invoke-NetworkOptimization -Mode Optimized
+    Invoke-NetworkOptimization -Mode $NetworkMode
 } catch {
     Write-Log ("Network step encountered a warning: {0}" -f $_.Exception.Message) "WARN"
 }

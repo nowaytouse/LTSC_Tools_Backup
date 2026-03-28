@@ -1,42 +1,39 @@
-# Windows LTSC Backup - Start Here
+# Windows LTSC Start Here
 
 ## One Command
 
-Use only this one script in an elevated PowerShell window:
+Run only this script in an elevated PowerShell window:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1
 ```
 
-## What It Does
-
-`00_QuickSetup.ps1` now combines the old multi-step process into one standalone file and one run:
-
-- fixes network and TLS issues
-- installs Store, Winget, Scoop, and Chocolatey
-- restores common LTSC app packages
-- installs core applications
-- installs developer toolchains and package ecosystems
-- installs PowerShell 7
-- applies common LTSC tweaks
-- runs a final component audit summary
-
-## Optional Flags
+## Recommended Variants
 
 ```powershell
+D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -NetworkMode Basic
+D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -NetworkMode Optimized
+D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -NetworkMode Extreme
 D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -SkipDevTools
-D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
-D:\LTSC_Tools_Backup\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
 ```
 
-`Scripts\` now contains only `00_QuickSetup.ps1`.
+## Included In One Run
+
+- network repair and tuning
+- Store, Winget, Scoop, and Chocolatey bootstrap
+- Store registration repair
+- LTSC app restoration and desktop alternatives
+- common apps and developer tools
+- PowerShell 7
+- LTSC system tweaks
+- final audit summary
 
 ## After The Run
 
-- Check `Logs\` for the latest setup log.
-- Reboot Windows once.
-- Verify with:
+- check the newest log in `Logs\`
+- reboot once
+- verify with:
 
 ```powershell
 winget --version
@@ -46,4 +43,4 @@ node --version
 python --version
 ```
 
-Last Updated: 2026-03-28
+Last Updated: 2026-03-29

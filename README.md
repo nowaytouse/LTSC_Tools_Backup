@@ -1,67 +1,65 @@
-# Windows LTSC One-Click Setup Backup
+# Windows LTSC One-Click Setup
 
-This repository is now centered on a single standalone script that bootstraps a fresh LTSC machine from package managers to developer tooling.
+This repository is intentionally reduced to one primary setup script for rebuilding a Windows LTSC workstation with one entrypoint.
 
 ## Quick Start
 
-Run one script in an elevated PowerShell window:
+Run this in an elevated PowerShell window:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 .\Scripts\00_QuickSetup.ps1
 ```
 
-That single script now covers:
+## What The Script Handles
 
-- Network repair and TLS hardening
-- Microsoft Store and Winget bootstrap
-- Scoop and Chocolatey setup
-- LTSC UWP app restoration
-- Core desktop app installation
-- Developer CLI and desktop tool installation
+- network repair, TLS hardening, DNS tuning, and TCP optimization
+- Microsoft Store bootstrap and Start menu repair
+- Winget dependency installation and App Installer setup
+- Scoop and Chocolatey bootstrap
+- LTSC UWP app restore plus practical desktop alternatives
+- core desktop applications
+- developer CLI stack and desktop tools
 - Rust, Cargo, npm, pip, and `uv` tooling
 - PowerShell 7 installation
-- Common LTSC registry tweaks
+- common LTSC registry tweaks
+- final component audit summary
 
-## Optional Modes
-
-If you want the same script to do less, use these switches:
+## Optional Parameters
 
 ```powershell
 .\Scripts\00_QuickSetup.ps1 -SkipDevTools
 .\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
 .\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
+.\Scripts\00_QuickSetup.ps1 -NetworkMode Basic
+.\Scripts\00_QuickSetup.ps1 -NetworkMode Extreme
 ```
 
-## Repository Structure
+## Repository Layout
 
 ```text
 LTSC_Tools_Backup/
 ├── Scripts/
-│   ├── 00_QuickSetup.ps1        # Main standalone one-click setup script
+│   └── 00_QuickSetup.ps1
 ├── Docs/
+│   ├── final_setup_report.md
+│   ├── setup_notes.md
+│   └── software_list.md
 ├── Logs/
 └── START_HERE.md
 ```
 
-## Current Flow
-
-Everything is now merged into one actual runnable file:
-
-1. `00_QuickSetup.ps1`
-
-The old helper and legacy setup scripts have been removed from `Scripts\`.
-
 ## Notes
 
-- Run the script as Administrator.
-- A reboot after completion is recommended.
-- Execution details are written to `Logs\setup_YYYYMMDD_HHMMSS.log`.
+- Run as Administrator.
+- Reboot after completion.
+- Review the generated log under `Logs\`.
+- The repository no longer depends on helper setup scripts.
 
 ## Compatibility
 
 - Windows 10 IoT Enterprise LTSC 2021
 - Windows 11 IoT Enterprise LTSC 2024
-- Other Windows Enterprise/LTSC variants with similar component baselines
+- similar Windows Enterprise or LTSC environments
 
-Last Updated: 2026-03-28
+Last Updated: 2026-03-29

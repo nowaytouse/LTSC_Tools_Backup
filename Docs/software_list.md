@@ -1,153 +1,37 @@
-# Recommended LTSC Software Library
+# LTSC Software Coverage
 
-## Essential Tools (Must-Install)
+## Included By Default
 
-```powershell
-# Archiver
-winget install 7zip.7zip
+The main script already installs these baseline desktop applications:
 
-# Browsers
-winget install Google.Chrome
-winget install Mozilla.Firefox
+- `7zip.7zip`
+- `VideoLAN.VLC`
+- `Google.Chrome`
+- `Notepad++.Notepad++`
+- `ShareX.ShareX`
+- `IrfanSkiljan.IrfanView`
 
-# Media Playback
-winget install VideoLAN.VLC
+## Included With Developer Mode Enabled
 
-# Text Editing
-winget install Notepad++.Notepad++
-```
+Without `-SkipDevTools`, the script also installs:
 
-## Development Suite
+- desktop tools: `Bitwarden.CLI`, `LocalSend.LocalSend`, `GnuPG.Gpg4win`, `Microsoft.OpenJDK.21`, `EFF.Certbot`
+- Scoop packages for git, runtimes, media tooling, compression tools, OCR, backup, and CLI utilities
+- Rust and Cargo packages
+- npm global packages
+- pip packages
+- `uv` plus `kimi-cli`
 
-```powershell
-# Version Control
-winget install Git.Git
+## Not Automatically Included
 
-# Code Editor
-winget install Microsoft.VisualStudioCode
+These are still reasonable manual add-ons depending on preference:
 
-# PowerShell & Terminal
-winget install Microsoft.PowerShell
-winget install Microsoft.WindowsTerminal
+- Firefox
+- VS Code
+- PowerToys
+- Obsidian
+- SumatraPDF
+- Wireshark
+- RustDesk
 
-# Runtimes & SDKs
-winget install Microsoft.DotNet.SDK.8
-winget install Python.Python.3.12
-winget install NodeJS.NodeJS.LTS
-winget install Oracle.JavaRuntimeEnvironment
-```
-
-## System Utilities
-
-```powershell
-# Microsoft Utility Suite
-winget install Microsoft.PowerToys
-
-# Disk & Storage Analysis
-winget install CrystalDewWorld.CrystalDiskInfo
-winget install JAMSoftware.TreeSize.Free
-
-# System Auditing
-winget install Belarc.Advisor
-
-# Clean Uninstaller
-winget install GeekSoftware.GeeekUninstaller
-```
-
-## Productivity & Efficiency
-
-```powershell
-# Capture & Screenshot
-winget install ShareX.ShareX
-
-# Image Viewer
-winget install IrfanSkiljan.IrfanView
-
-# Instant Search
-winget install Everything.Alpha
-
-# File/App Launcher
-winget install Flow-Launcher.Flow-Launcher
-
-# Knowledge Base / Notes
-winget install Obsidian.Obsidian
-```
-
-## Office & Documentation
-
-```powershell
-# PDF Viewer
-winget install SumatraPDF.SumatraPDF
-
-# Mind Mapping
-winget install FreePlane.FreePlane
-```
-
-## Network & Connectivity
-
-```powershell
-# Download Manager
-winget install Motrix.Motrix
-
-# Remote Desktop
-winget install RustDesk.RustDesk
-winget install RealVNC.VNCViewer
-
-# Traffic Analysis
-winget install WiresharkFoundation.Wireshark
-```
-
-## Security
-
-```powershell
-# Password Management
-winget install KeePassXCTeam.KeePassXC
-
-# Antivirus (Optional - Windows Defender is usually sufficient)
-# winget install Malwarebytes.Malwarebytes
-```
-
-## Gaming
-
-```powershell
-# Platforms
-winget install Valve.Steam
-winget install Epic.EpicGamesLauncher
-
-# Frameworks
-winget install Microsoft.DirectX
-```
-
----
-
-## Batch Installation Script
-
-```powershell
-# One-click installation of a standardized baseline
-$apps = @(
-    "7zip.7zip",
-    "Google.Chrome",
-    "VideoLAN.VLC",
-    "Notepad++.Notepad++",
-    "Git.Git",
-    "Microsoft.VisualStudioCode",
-    "Microsoft.PowerShell",
-    "Microsoft.DotNet.SDK.8",
-    "Python.Python.3.12",
-    "NodeJS.NodeJS.LTS",
-    "Microsoft.PowerToys",
-    "ShareX.ShareX",
-    "IrfanSkiljan.IrfanView",
-    "SumatraPDF.SumatraPDF",
-    "Obsidian.Obsidian"
-)
-
-foreach ($app in $apps) {
-    Write-Host "Installing $app..." -ForegroundColor Cyan
-    winget install --id $app --silent --accept-package-agreements --accept-source-agreements
-}
-```
-
----
-
-*Last Updated: 2026-03-28*
+Last Updated: 2026-03-29

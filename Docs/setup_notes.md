@@ -1,142 +1,46 @@
-# Windows 11 LTSC Configuration Notes
+# Windows LTSC Setup Notes
 
-## Configuration Date
-March 25, 2026
+## Summary
 
-## System Information
-- **OS**: Windows 11 IoT Enterprise LTSC 2024
-- **Build**: 10.0.26200.8039
-- **Version**: 2009
+The setup flow has been fully collapsed into `Scripts\00_QuickSetup.ps1`.
 
----
+## Why The Script Exists
 
-## 1. Identified Issues
+LTSC installs commonly miss:
 
-### 1.1 Missing Components
-LTSC versions typically lack:
-- ❌ Microsoft Store
-- ❌ Winget (Package Manager)
-- ❌ Essential UWP Apps (Calculator, Paint, Photos, etc.)
-- ❌ Windows Terminal & PowerShell 7
-- ❌ Optional Features (Sandbox, WSL, Hyper-V are disabled by default)
+- Microsoft Store
+- Winget
+- common UWP utilities
+- PowerShell 7
+- optional developer features
+- a consistent package manager baseline
 
-### 1.2 Networking Challenges
-**Symptoms**:
-- Timeouts when downloading from GitHub.
-- HTTPS connection failures.
-- Connection drops during large file transfers.
+## Embedded Strategy
 
-**Root Causes**:
-- TLS 1.2 not explicitly enabled/configured in SCHANNEL.
-- Suboptimal default DNS settings.
-- Network stack requires modern tuning for LTSC.
+The script now performs this sequence internally:
 
-**Solutions**:
-Implemented directly in `00_QuickSetup.ps1`.
+1. repair TLS, DNS, Winsock, proxy, and TCP settings
+2. bootstrap Store, Winget dependencies, Winget, Scoop, and Chocolatey
+3. repair Store registration and shell visibility
+4. restore LTSC apps and install fallback desktop alternatives
+5. install common desktop applications
+6. install developer tooling when `-SkipDevTools` is not used
+7. install PowerShell 7
+8. apply LTSC registry tweaks
+9. write a final component audit summary
 
-### 1.3 Winget Installation Failures
-**Symptoms**:
-- Deployment failed HRESULT: 0x80073CF3.
-- Missing dependencies: `Microsoft.VCLibs` and `Microsoft.UI.Xaml`.
+## Practical Notes
 
-**Solutions**:
-- Use BITS (Background Intelligent Transfer Service) for stability.
-- Ensure dependencies are installed prior to the main appx package.
+- `Start-BitsTransfer` is used for Winget dependency downloads because it is more resilient on LTSC
+- `winget` remains the primary application installer
+- practical alternatives such as ShareX, IrfanView, and Paint.NET are included because some UWP apps remain unreliable on LTSC
+- a reboot is recommended after the run
 
----
+## Key Parameters
 
-## 2. Successful Implementation Strategy
+- `-SkipDevTools`
+- `-SkipOptionalFeatures`
+- `-SkipSystemTweaks`
+- `-NetworkMode Basic|Optimized|Extreme`
 
-### 2.1 Core Component Order
-
-#### Step 1: Network Repair
-Run `00_QuickSetup.ps1`; it now includes the network repair and tuning stage internally.
-
-#### Step 2: Establish Store & Winget
-- Trigger Store installation via `wsreset -i`.
-- Download Winget using BITS to avoid corrupted installer files.
-
-#### Step 3: Winget Software Library
-Standardized on the following IDs for a clean setup:
-- `7zip.7zip`
-- `VideoLAN.VLC`
-- `Google.Chrome`
-- `Notepad++.Notepad++`
-- `ShareX.ShareX`
-- `IrfanSkiljan.IrfanView`
-
-#### Step 4: PowerShell 7 Modernization
-Always fetch the latest MSI from the official GitHub releases to ensure path integration.
-
-### 2.2 UWP Application Strategy
-**Conclusion**: Some native UWP apps are inherently incompatible or difficult to maintain on LTSC.
-
-**Recommended Alternatives**:
-| Native UWP App | Modern Alternative |
-|----------------|--------------------|
-| MS Paint       | Paint.NET          |
-| Photos         | IrfanView          |
-| Snipping Tool  | ShareX             |
-| Calculator     | Qalculate!         |
-| Alarms         | System Tray Clock  |
-
----
-
-## 3. System Optimization
-
-### 3.1 Registry Tweaks
-Applied via `00_QuickSetup.ps1`:
-- **LongPathsEnabled**: Removes the 260-character limit.
-- **HideFileExt**: Displays file extensions for security and clarity.
-- **Hidden**: Shows hidden files and folders.
-- **AllowDevelopmentWithoutDevLicense**: Enables Developer Mode.
-
-### 3.2 Optional Features
-Enable as needed using standard DISM commands:
-- **Windows Sandbox**: Secure, isolated desktop environment.
-- **WSL 2**: Linux Subsystem for Windows.
-- **Hyper-V**: Hardware virtualization.
-
----
-
-## 4. Key Lessons Learned
-
-1. **TLS is the Foundation**: If TLS 1.2/1.3 is not properly configured, all subsequent GitHub/HTTPS downloads will fail.
-2. **BITS is Superior**: For LTSC environments, `Start-BitsTransfer` is significantly more robust than `Invoke-WebRequest`.
-3. **Sequence Matters**: Repair Network -> Install Managers -> Install Apps -> Optimize System.
-4. **Embrace Alternatives**: Using robust open-source alternatives is often better than forcing UWP apps onto LTSC.
-
----
-
-## 5. Command Cheat Sheet
-
-### Winget Basics
-```powershell
-# Search for software
-winget search <keyword>
-
-# Silent installation
-winget install <ID> --silent --accept-package-agreements
-
-# Upgrade All
-winget upgrade --all --silent
-
-# Export list for future systems
-winget export -o installed.json
-```
-
-### System Audits
-```powershell
-# List all Appx Packages
-Get-AppxPackage | Select-Object Name, Version
-
-# Check Feature Status
-Get-WindowsOptionalFeature -Online
-
-# Test GitHub Connectivity
-Test-NetConnection -ComputerName github.com -Port 443
-```
-
----
-
-*Notes Last Updated: March 28, 2026*
+Last Updated: 2026-03-29
