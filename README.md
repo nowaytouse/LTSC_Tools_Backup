@@ -1,134 +1,78 @@
-# Windows 11 LTSC Enterprise - Complete Configuration Backup
+# Windows LTSC One-Click Setup Backup
 
-This repository contains a full set of scripts and documentation for configuring and optimizing Windows 11 IoT Enterprise LTSC.
+This repository is now centered on a single entry script that can bootstrap a fresh LTSC machine from package managers to developer tooling.
 
-## 📁 Repository Structure
+## Quick Start
 
-```
-D:\LTSC_Tools_Backup\
-├── Scripts\           # Installation and optimization scripts
-├── Docs\              # Documentation and configuration notes
-├── Config\            # Configuration backup files (winget exports, etc.)
-└── Logs\              # Installation logs
-```
+Run one script in an elevated PowerShell window:
 
----
-
-## 📋 Compatible Systems
-
-- Windows 10 IoT Enterprise LTSC 2021 (Build 19044)
-- Windows 11 IoT Enterprise LTSC 2024 (Build 26100/26200)
-- Other Windows LTSC/Enterprise editions
-
----
-
-## 🚀 Quick Start
-
-### Recommended: All-in-One Setup
-Run the main installer to handle everything from network repair to app installation.
 ```powershell
-# Run as Administrator
+Set-ExecutionPolicy Bypass -Scope Process -Force
 .\Scripts\00_QuickSetup.ps1
 ```
 
-### Advanced: Selective Optimization
-For specific network tuning (Basic, Optimized, or Extreme):
+That single command now covers:
+
+- Network repair and TLS hardening
+- Microsoft Store and Winget bootstrap
+- Scoop and Chocolatey setup
+- LTSC UWP app restoration
+- Core desktop app installation
+- Developer CLI and desktop tool installation
+- Rust, Cargo, npm, pip, and `uv` tooling
+- PowerShell 7 installation
+- Common LTSC registry tweaks
+
+## Optional Modes
+
+If you want the same script to do less, use these switches:
+
 ```powershell
-.\Scripts\Optimize-Network.ps1 -Mode Extreme
+.\Scripts\00_QuickSetup.ps1 -SkipDevTools
+.\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
+.\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
 ```
 
----
+## Repository Structure
 
-## 📦 Script Descriptions
-
-### Main Workflow Scripts
-
-| Script Name | Purpose | Recommended Order |
-|-------------|---------|-------------------|
-| `00_QuickSetup.ps1` | **Master Setup**: Network, Store, Apps, and System Tweaks. | 1 |
-| `01_bootstrap_ltsc.ps1` | Package Manager Setup (NuGet, Winget, Scoop). | 2 |
-| `03_install_windows.ps1` | Full Development Environment Setup. | 3 |
-
-### Specialty Tools
-
-| Script Name | Purpose |
-|-------------|---------|
-| `Optimize-Network.ps1` | Advanced TCP and Adapter performance tuning. |
-| `check_ltsc_components.ps1` | Audit system for missing LTSC components. |
-| `fix_store_menu.ps1` | Repair Microsoft Store visibility in Start Menu. |
-| `install_uwp_cdn.ps1` | Install UWP apps directly from Microsoft CDN. |
-
----
-
-## 🔧 Installation Methodology
-
-### Option 1: Sequential Method (Recommended)
-1. Run `00_QuickSetup.ps1` for baseline configuration.
-2. Run `01_bootstrap_ltsc.ps1` to ensure all package managers are ready.
-3. Use `03_install_windows.ps1` for development tools.
-
-### Option 2: Modular Approach
-- Every script in the `Scripts/` folder is designed to be stand-alone.
-- You can run any script individually based on your needs.
-
----
-
-## ⚠️ Troubleshooting & FAQ
-
-### Issue 1: Winget Download Failures
-**Cause:** Unstable connection to GitHub.  
-**Solution:** The scripts automatically attempt to use BITS for more reliable transfers.
-```powershell
-# Manual BITS download example
-Start-BitsTransfer -Source <URL> -Destination <File>
+```text
+LTSC_Tools_Backup/
+├── Scripts/
+│   ├── 00_QuickSetup.ps1        # Main one-click setup entrypoint
+│   ├── Install-Winget.ps1       # Winget helper
+│   ├── Install-UWP-Apps.ps1     # LTSC app restore helper
+│   ├── Optimize-Network.ps1     # Network optimization helper
+│   ├── 01_bootstrap_ltsc.ps1    # Legacy standalone bootstrap flow
+│   └── 03_install_windows.ps1   # Legacy standalone dev environment flow
+├── Docs/
+├── Logs/
+└── START_HERE.md
 ```
 
-### Issue 2: Store Missing After Install
-**Cause:** Start Menu cache issues.  
-**Solution:** Re-register the Store app package.
-```powershell
-Get-AppxPackage -Name Microsoft.WindowsStore | 
-  Add-AppxPackage -Register "$($_.InstallLocation)\appxmanifest.xml"
-```
+## Current Flow
 
-### Issue 3: Networking Timeouts
-**Cause:** Improper TLS or DNS configuration.  
-**Solution:** Run `Optimize-Network.ps1` (or the network step in QuickSetup).
+The old manual sequence:
 
----
+1. `00_QuickSetup.ps1`
+2. `01_bootstrap_ltsc.ps1`
+3. `03_install_windows.ps1`
 
-## 🔐 System Optimization Reference
+has been merged into:
 
-### Essential Registry Tweaks
-```powershell
-# Enable Long Paths (260+ characters)
-Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
+1. `00_QuickSetup.ps1`
 
-# Show File Extensions
-Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "HideFileExt" 0
+The older scripts are kept as fallback references, but they are no longer required for a normal rebuild.
 
-# Show Hidden Files
-Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Hidden" 1
-```
+## Notes
 
-### Optional Windows Features
-```powershell
-# Enable Windows Sandbox
-dism /online /enable-feature /featurename:Containers-DisposableClientVM /All
+- Run the script as Administrator.
+- A reboot after completion is recommended.
+- Execution details are written to `Logs\setup_YYYYMMDD_HHMMSS.log`.
 
-# Enable WSL 2
-dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /All
-```
+## Compatibility
 
----
+- Windows 10 IoT Enterprise LTSC 2021
+- Windows 11 IoT Enterprise LTSC 2024
+- Other Windows Enterprise/LTSC variants with similar component baselines
 
-## 📅 Backup Metadata
-
-- **Backup Date:** 2026-03-25
-- **OS Version:** Windows 11 IoT Enterprise LTSC 2024
-- **Build Number:** 26200
-- **Primary Location:** D:\LTSC_Tools_Backup
-
----
-
-*Last Updated: 2026-03-28*
+Last Updated: 2026-03-28
