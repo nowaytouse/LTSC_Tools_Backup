@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "lean-ctx": {
+      "command": "/opt/homebrew/bin/lean-ctx"
+    }
+  }
+}

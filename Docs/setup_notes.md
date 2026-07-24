@@ -2,45 +2,43 @@
 
 ## Summary
 
-The setup flow has been fully collapsed into `Scripts\00_QuickSetup.ps1`.
+The setup flow is consolidated into a single, fully idempotent execution script: `Scripts\00_QuickSetup.ps1`.
 
 ## Why The Script Exists
 
-LTSC installs commonly miss:
+Standard Windows LTSC installations omit key modern capabilities out of the box:
 
-- Microsoft Store
-- Winget
-- common UWP utilities
-- PowerShell 7
-- optional developer features
-- a consistent package manager baseline
+- Microsoft Store and AppInstaller / Winget infrastructure
+- Modern developer CLI utilities and AI agent toolchains
+- PowerShell 7 and modern shell customizers
+- Pre-configured package managers (Winget, Scoop, Cargo, NPM, UV)
+- System tweaks such as NTFS Long Paths and Developer Mode
 
 ## Embedded Strategy
 
-The script now performs this sequence internally:
+The setup script executes the following sequence:
 
-1. repair TLS, DNS, Winsock, proxy, and TCP settings
-2. bootstrap Store, Winget dependencies, Winget, Scoop, and Chocolatey
-3. repair Store registration and shell visibility
-4. restore LTSC apps and install fallback desktop alternatives
-5. install common desktop applications
-6. install developer tooling when `-SkipDevTools` is not used
-7. install PowerShell 7
-8. apply LTSC registry tweaks
-9. write a final component audit summary
+1. **Network Optimization**: Hardens TLS 1.2/1.3, flushes DNS, and tunes TCP stack based on the specified `-NetworkMode`.
+2. **Package Manager Bootstrap**: Checks and provisions NuGet, PowerShellGet, Microsoft Store Appx manifests, Winget dependencies, Scoop, and Chocolatey.
+3. **Store & AppX Repair**: Re-registers AppX manifests for Store apps and Start menu visibility.
+4. **Built-In App Restoration**: Restores Calculator, Photos, Paint, Snipping Tool, and Windows Terminal.
+5. **Optional Features Audit**: Checks and enables Windows Sandbox and WSL.
+6. **Core Desktop Applications**: Installs baseline utilities (7-Zip, VLC, Chrome, Notepad++, ShareX, IrfanView).
+7. **Developer Environment (macOS Feature Parity)**:
+   - Installs IDEs (VS Code, Cursor) and desktop tools (Podman, Krita, PureRef, Cryptomator, Bitwarden, LocalSend).
+   - Installs Scoop CLI developer tools (git, gh, ripgrep, fd, fzf, bat, eza, starship, fastfetch, sccache, etc.).
+   - Installs Rust toolchain & Cargo tools (`rtk`, `kondo`, `krokiet`, `rust-script`, etc.).
+   - Installs NPM global AI & code tools (`@anthropic-ai/claude-code`, `opencode-ai`, `pyright`, `context-mode`, etc.).
+   - Installs Python libraries and UV global CLIs (`kimi-cli`, `ruff`).
+8. **PowerShell 7 Installation**: Upgrades shell runtime to PowerShell 7 (`pwsh`).
+9. **System Tweaks**: Enables NTFS Long Paths (`LongPathsEnabled = 1`), Developer Mode, and unhides file extensions.
+10. **Audit Summary**: Emits a comprehensive component health report to console and log.
 
-## Practical Notes
+## Operational Parameters
 
-- `Start-BitsTransfer` is used for Winget dependency downloads because it is more resilient on LTSC
-- `winget` remains the primary application installer
-- practical alternatives such as ShareX, IrfanView, and Paint.NET are included because some UWP apps remain unreliable on LTSC
-- a reboot is recommended after the run
+- `-SkipDevTools`: Skips developer apps, Scoop, Cargo, NPM, and Pip batches.
+- `-SkipOptionalFeatures`: Skips Sandbox and WSL enablement.
+- `-SkipSystemTweaks`: Skips system registry modifications.
+- `-NetworkMode`: Basic, Optimized, or Extreme TCP/DNS tuning.
 
-## Key Parameters
-
-- `-SkipDevTools`
-- `-SkipOptionalFeatures`
-- `-SkipSystemTweaks`
-- `-NetworkMode Basic|Optimized|Extreme`
-
-Last Updated: 2026-03-29
+Last Updated: 2026-07-24

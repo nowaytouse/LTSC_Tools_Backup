@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lean-ctx": {
+      "command": "lean-ctx",
+      "instructions": "CRITICAL: ALWAYS use lean-ctx ctx_* tools instead of native equivalents. This is NOT optional.\n\nMANDATORY MAPPING:\n• Read/cat -> ctx_read(path, mode)\n• Grep -> ctx_search(pattern, path)\n• Shell/bash -> ctx_shell(command)\n• Glob/find -> ctx_glob(pattern)\n• ls/find -> ctx_tree(path, depth)\n\nNEVER use native Read/Grep/Shell/Glob when a ctx_* equivalent exists. SELF-CORRECT: the moment you reach for one, stop and call the ctx_* tool instead."
+    }
+  }
+}

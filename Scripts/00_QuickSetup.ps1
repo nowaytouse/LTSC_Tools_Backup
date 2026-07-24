@@ -1,17 +1,22 @@
-#!/usr/bin/env pwsh
+#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Windows LTSC one-click full setup script.
+    Unified Windows LTSC Restoration & Dev Environment Setup Script
 .DESCRIPTION
-    Single-entry LTSC rebuild script covering network repair, Store/Winget
-    bootstrap, package managers, core apps, developer toolchains,
-    PowerShell 7, and system tweaks.
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\Scripts\00_QuickSetup.ps1
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File .\Scripts\00_QuickSetup.ps1 -SkipDevTools
+    Single entrypoint script for rebuilding a Windows LTSC workstation with full developer capabilities,
+    network optimizations, package bootstrapping (Winget, Scoop, Chocolatey), UWP app restoration,
+    system tweaks, and package installations (Winget, Scoop, Cargo, NPM, Pip, UV).
+.PARAMETER SkipDevTools
+    Skips developer CLI tools, runtimes, Rust, Cargo, NPM, and Pip packages.
+.PARAMETER SkipOptionalFeatures
+    Skips enabling Windows optional features like Sandbox and WSL.
+.PARAMETER SkipSystemTweaks
+    Skips applying LTSC system registry tweaks.
+.PARAMETER NetworkMode
+    Network optimization intensity level: Basic, Optimized (default), or Extreme.
 #>
 
+[CmdletBinding()]
 param(
     [switch]$SkipDevTools,
     [switch]$SkipOptionalFeatures,
@@ -20,58 +25,51 @@ param(
     [string]$NetworkMode = "Optimized"
 )
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
 $ErrorActionPreference = "Stop"
 
-$script:RepoRoot = Split-Path -Parent $PSScriptRoot
-$script:LogDir = Join-Path $script:RepoRoot "Logs"
+# Establish runtime logging path
+$script:LogDir = Join-Path $PSScriptRoot "..\Logs"
 if (-not (Test-Path $script:LogDir)) {
-    New-Item -ItemType Directory -Path $script:LogDir -Force | Out-Null
+    New-Item -Path $script:LogDir -ItemType Directory -Force | Out-Null
 }
-$script:LogFile = Join-Path $script:LogDir ("setup_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
-$script:StepIndex = 0
-$script:StepTotal = if ($SkipDevTools) { 9 } else { 15 }
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$script:LogFile = Join-Path $script:LogDir ("setup_{0}.log" -f $timestamp)
 
 function Write-Log {
     param(
         [Parameter(Mandatory = $true)][string]$Message,
-        [ValidateSet("INFO", "OK", "WARN", "ERROR", "START", "END")][string]$Level = "INFO"
+        [string]$Level = "INFO"
     )
+    $timeStr = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logLine = "[{0}] [{1}] {2}" -f $timeStr, $Level.ToUpper(), $Message
+    Add-Content -Path $script:LogFile -Value $logLine -ErrorAction SilentlyContinue
 
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $entry = "[{0}] [{1}] {2}" -f $timestamp, $Level, $Message
-    Add-Content -Path $script:LogFile -Value $entry
-
-    $color = switch ($Level) {
-        "OK" { "Green" }
-        "WARN" { "Yellow" }
-        "ERROR" { "Red" }
-        "START" { "Cyan" }
-        "END" { "Cyan" }
-        default { "Gray" }
+    switch ($Level.ToUpper()) {
+        "OK"    { Write-Host ("  [+] {0}" -f $Message) -ForegroundColor Green }
+        "WARN"  { Write-Host ("  [!] {0}" -f $Message) -ForegroundColor Yellow }
+        "ERROR" { Write-Host ("  [-] {0}" -f $Message) -ForegroundColor Red }
+        "START" { Write-Host ("`n>>> {0}" -f $Message) -ForegroundColor Cyan }
+        "END"   { Write-Host ("`n<<< {0}" -f $Message) -ForegroundColor Cyan }
+        default { Write-Host ("  [*] {0}" -f $Message) -ForegroundColor White }
     }
-
-    Write-Host ("  {0}" -f $Message) -ForegroundColor $color
 }
 
 function Show-Step {
     param([Parameter(Mandatory = $true)][string]$Title)
-
-    $script:StepIndex++
     Write-Host ""
-    Write-Host ("━" * 68) -ForegroundColor Cyan
-    Write-Host ("  [{0}/{1}] {2}" -f $script:StepIndex, $script:StepTotal, $Title) -ForegroundColor Yellow
-    Write-Host ("━" * 68) -ForegroundColor Cyan
+    Write-Host ("=== {0} ===" -f $Title) -ForegroundColor Cyan
+    Write-Log ("Step: {0}" -f $Title) "INFO"
 }
 
 function Test-Admin {
-    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 function Test-CommandAvailable {
-    param([Parameter(Mandatory = $true)][string]$Name)
-    return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+    param([Parameter(Mandatory = $true)][string]$CommandName)
+    return [bool](Get-Command $CommandName -ErrorAction SilentlyContinue)
 }
 
 function Install-WingetPackage {
@@ -85,18 +83,19 @@ function Install-WingetPackage {
         return
     }
 
-    $existing = winget list --id $Id -e 2>$null | Select-String $Id
+    $escapedId = [regex]::Escape($Id)
+    $existing = winget list --id $Id -e 2>$null | Select-String $escapedId
     if ($existing) {
         Write-Log ("{0} is already installed." -f $Name) "OK"
         return
     }
 
     try {
-        Write-Log ("Installing {0}..." -f $Name)
+        Write-Log ("Installing {0} via Winget..." -f $Name)
         winget install --id $Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
         Write-Log ("Installed {0}." -f $Name) "OK"
     } catch {
-        Write-Log ("Failed to install {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+        Write-Log ("Failed to install {0} via Winget: {1}" -f $Name, $_.Exception.Message) "WARN"
     }
 }
 
@@ -104,22 +103,22 @@ function Install-ScoopPackage {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     if (-not (Test-CommandAvailable "scoop")) {
-        Write-Log ("Skipped {0}; Scoop is unavailable." -f $Name) "WARN"
+        Write-Log ("Skipped Scoop package {0}; Scoop is unavailable." -f $Name) "WARN"
+        return
+    }
+
+    $existing = scoop list 2>$null | Select-String ("^\s*{0}\s" -f [regex]::Escape($Name))
+    if ($existing) {
+        Write-Log ("Scoop package {0} is already installed." -f $Name) "OK"
         return
     }
 
     try {
-        $scoopStatus = scoop list 2>$null | Select-String ("^" + [regex]::Escape($Name) + "\s")
-        if ($scoopStatus) {
-            Write-Log ("Scoop package already installed: {0}" -f $Name) "OK"
-            return
-        }
-
-        Write-Log ("Installing Scoop package: {0}" -f $Name)
+        Write-Log ("Installing {0} via Scoop..." -f $Name)
         scoop install $Name 2>$null | Out-Null
-        Write-Log ("Installed Scoop package: {0}" -f $Name) "OK"
+        Write-Log ("Installed {0} via Scoop." -f $Name) "OK"
     } catch {
-        Write-Log ("Failed Scoop install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+        Write-Log ("Failed to install {0} via Scoop: {1}" -f $Name, $_.Exception.Message) "WARN"
     }
 }
 
@@ -127,16 +126,16 @@ function Install-CargoPackage {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     if (-not (Test-CommandAvailable "cargo")) {
-        Write-Log ("Skipped {0}; cargo is unavailable." -f $Name) "WARN"
+        Write-Log ("Skipped Cargo package {0}; cargo is unavailable." -f $Name) "WARN"
         return
     }
 
     try {
-        Write-Log ("Installing cargo package: {0}" -f $Name)
-        cargo install $Name 2>$null | Out-Null
-        Write-Log ("Cargo package processed: {0}" -f $Name) "OK"
+        Write-Log ("Installing {0} via Cargo..." -f $Name)
+        cargo install $Name --quiet 2>$null | Out-Null
+        Write-Log ("Installed {0} via Cargo." -f $Name) "OK"
     } catch {
-        Write-Log ("Failed cargo install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+        Write-Log ("Failed to install {0} via Cargo: {1}" -f $Name, $_.Exception.Message) "WARN"
     }
 }
 
@@ -144,16 +143,16 @@ function Install-NpmGlobalPackage {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     if (-not (Test-CommandAvailable "npm")) {
-        Write-Log ("Skipped {0}; npm is unavailable." -f $Name) "WARN"
+        Write-Log ("Skipped NPM global package {0}; npm is unavailable." -f $Name) "WARN"
         return
     }
 
     try {
-        Write-Log ("Installing NPM global package: {0}" -f $Name)
-        npm install -g $Name 2>$null | Out-Null
-        Write-Log ("Installed NPM global package: {0}" -f $Name) "OK"
+        Write-Log ("Installing {0} globally via NPM..." -f $Name)
+        npm install -g $Name --loglevel=error 2>$null | Out-Null
+        Write-Log ("Installed {0} globally via NPM." -f $Name) "OK"
     } catch {
-        Write-Log ("Failed npm install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+        Write-Log ("Failed to install {0} globally via NPM: {1}" -f $Name, $_.Exception.Message) "WARN"
     }
 }
 
@@ -161,209 +160,150 @@ function Install-PipPackage {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     if (-not (Test-CommandAvailable "pip")) {
-        Write-Log ("Skipped {0}; pip is unavailable." -f $Name) "WARN"
+        Write-Log ("Skipped pip package {0}; pip is unavailable." -f $Name) "WARN"
         return
     }
 
     try {
-        Write-Log ("Installing pip package: {0}" -f $Name)
+        Write-Log ("Installing {0} via pip..." -f $Name)
         pip install $Name --quiet 2>$null | Out-Null
-        Write-Log ("Installed pip package: {0}" -f $Name) "OK"
+        Write-Log ("Installed {0} via pip." -f $Name) "OK"
     } catch {
-        Write-Log ("Failed pip install for {0}: {1}" -f $Name, $_.Exception.Message) "WARN"
+        Write-Log ("Failed to install {0} via pip: {1}" -f $Name, $_.Exception.Message) "WARN"
     }
 }
 
 function Install-PackageProviderIfMissing {
-    try {
-        $nugetProvider = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
-        if (-not $nugetProvider) {
-            Write-Log "Installing NuGet provider..."
+    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+        try {
+            Write-Log "Installing NuGet PackageProvider..."
             Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
-            Write-Log "NuGet provider ready." "OK"
-        } else {
-            Write-Log "NuGet provider already available." "OK"
+            Write-Log "NuGet PackageProvider installed." "OK"
+        } catch {
+            Write-Log ("Failed to install NuGet PackageProvider: {0}" -f $_.Exception.Message) "WARN"
         }
-    } catch {
-        Write-Log ("NuGet provider setup failed: {0}" -f $_.Exception.Message) "WARN"
+    } else {
+        Write-Log "NuGet PackageProvider is available." "OK"
     }
 }
 
 function Ensure-PowerShellGet {
     try {
-        Write-Log "Updating PowerShellGet..."
+        Write-Log "Updating PowerShellGet module..."
         Install-Module -Name PowerShellGet -Force -AllowClobber -Scope CurrentUser -ErrorAction Stop | Out-Null
         Write-Log "PowerShellGet updated." "OK"
     } catch {
-        Write-Log ("PowerShellGet update skipped: {0}" -f $_.Exception.Message) "WARN"
+        Write-Log ("PowerShellGet update skipped/failed: {0}" -f $_.Exception.Message) "WARN"
     }
 }
 
 function Ensure-MicrosoftStore {
-    if (Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue) {
-        Write-Log "Microsoft Store is already present." "OK"
+    $store = Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue
+    if ($store) {
+        Write-Log "Microsoft Store is already registered." "OK"
         return
     }
 
-    Write-Log "Triggering Microsoft Store installation..."
     try {
-        wsreset -i 2>$null
-        Start-Sleep -Seconds 10
-        if (Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue) {
-            Write-Log "Microsoft Store installed successfully." "OK"
+        Write-Log "Attempting to restore Microsoft Store via Appx manifest..."
+        $manifestPath = Get-ChildItem -Path "$env:ProgramFiles\WindowsApps" -Filter "AppxManifest.xml" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*Microsoft.WindowsStore*" } |
+            Select-Object -First 1 -ExpandProperty FullName
+
+        if ($manifestPath) {
+            Add-AppxPackage -DisableDevelopmentMode -Register $manifestPath -ErrorAction Stop
+            Write-Log "Microsoft Store re-registered." "OK"
         } else {
-            Write-Log "Store installation was triggered; it may appear after a short delay." "INFO"
+            Write-Log "Microsoft Store manifest not found in WindowsApps cache." "WARN"
         }
     } catch {
-        Write-Log ("Microsoft Store installation failed: {0}" -f $_.Exception.Message) "WARN"
+        Write-Log ("Microsoft Store restoration failed: {0}" -f $_.Exception.Message) "WARN"
     }
 }
 
 function Repair-StoreVisibility {
-    $store = Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue
-    if (-not $store) {
-        Write-Log "Skipped Store visibility repair because Store is not installed." "WARN"
-        return
-    }
-
     try {
-        $manifestPath = Join-Path $store.InstallLocation "AppxManifest.xml"
-        if (Test-Path $manifestPath) {
-            Add-AppxPackage -Register $manifestPath -DisableDevelopmentMode -ForceApplicationShutdown -ErrorAction Stop
-            Write-Log "Re-registered Microsoft Store package." "OK"
+        Write-Log "Refreshing AppX package manifests for Store components..."
+        Get-AppxPackage -AllUsers *WindowsStore* -ErrorAction SilentlyContinue | ForEach-Object {
+            Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" -ErrorAction SilentlyContinue
         }
+        Write-Log "AppX package manifests refreshed." "OK"
     } catch {
-        Write-Log ("Store re-registration skipped: {0}" -f $_.Exception.Message) "WARN"
-    }
-
-    try {
-        if (Get-Process ShellExperienceHost -ErrorAction SilentlyContinue) {
-            Stop-Process -Name ShellExperienceHost -Force -ErrorAction SilentlyContinue
-            Write-Log "Restarted ShellExperienceHost to refresh Start menu visibility." "OK"
-        }
-    } catch {
-        Write-Log ("Shell refresh skipped: {0}" -f $_.Exception.Message) "WARN"
+        Write-Log ("AppX package refresh encountered an issue: {0}" -f $_.Exception.Message) "WARN"
     }
 }
 
 function Ensure-WingetDependencies {
-    $tempDir = Join-Path $env:TEMP "winget_deps"
-    if (-not (Test-Path $tempDir)) {
-        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-    }
-
     $deps = @(
-        @{
-            Name = "Microsoft.VCLibs"
-            Url = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
-            File = "Microsoft.VCLibs.x64.appx"
-        },
-        @{
-            Name = "Microsoft.UI.Xaml"
-            Url = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx"
-            File = "Microsoft.UI.Xaml.2.8.x64.appx"
-        }
+        @{ Name = "Microsoft.VCLibs.x64"; Url = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx" },
+        @{ Name = "Microsoft.UI.Xaml.x64"; Url = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx" }
     )
 
     foreach ($dep in $deps) {
-        $existingDep = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "$($dep.Name)*" }
-        if ($existingDep) {
-            Write-Log ("Dependency already present: {0}" -f $dep.Name) "OK"
-            continue
-        }
-
-        $targetFile = Join-Path $tempDir $dep.File
         try {
-            Write-Log ("Downloading dependency: {0}" -f $dep.Name)
-            Start-BitsTransfer -Source $dep.Url -Destination $targetFile -Priority High -ErrorAction Stop
-            Add-AppxPackage -Path $targetFile -ErrorAction Stop
-            Write-Log ("Installed dependency: {0}" -f $dep.Name) "OK"
+            $dest = Join-Path $env:TEMP ("{0}.appx" -f $dep.Name)
+            if (-not (Test-Path $dest)) {
+                Write-Log ("Downloading dependency {0}..." -f $dep.Name)
+                Start-BitsTransfer -Source $dep.Url -Destination $dest -ErrorAction Stop
+            }
+            Add-AppxPackage -Path $dest -ErrorAction SilentlyContinue
+            Write-Log ("Dependency {0} registered." -f $dep.Name) "OK"
         } catch {
-            Write-Log ("Dependency install failed for {0}: {1}" -f $dep.Name, $_.Exception.Message) "WARN"
+            Write-Log ("Failed downloading/registering {0}: {1}" -f $dep.Name, $_.Exception.Message) "WARN"
         }
     }
 }
 
 function Refresh-PathEnvironment {
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
 
 function Ensure-Winget {
     if (Test-CommandAvailable "winget") {
-        Write-Log "Winget is already available." "OK"
+        Write-Log "Winget is already operational." "OK"
         return
     }
 
     Ensure-WingetDependencies
 
-    $tempDir = Join-Path $env:TEMP "WingetSetup"
-    if (-not (Test-Path $tempDir)) {
-        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-    }
-    $bundleFile = Join-Path $tempDir "winget.msixbundle"
-    $sources = @(
-        "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
-        "https://mirror.ghproxy.com/https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
-        "https://ghproxy.net/https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
-        "https://github.moeyy.xyz/https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
-    )
-
-    $downloaded = $false
-    foreach ($source in $sources) {
-        try {
-            Write-Log ("Downloading Winget bundle from {0}" -f $source)
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0")
-            $wc.DownloadFile($source, $bundleFile)
-            if ((Test-Path $bundleFile) -and ((Get-Item $bundleFile).Length -gt 50MB)) {
-                $downloaded = $true
-                break
-            }
-        } catch {
-            Write-Log ("Winget source failed: {0}" -f $_.Exception.Message) "WARN"
+    try {
+        Write-Log "Bootstrapping Winget via PowerShell Appx deployment..."
+        $wingetUrl = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+        $bundlePath = Join-Path $env:TEMP "winget-installer.msixbundle"
+        Start-BitsTransfer -Source $wingetUrl -Destination $bundlePath -ErrorAction Stop
+        Add-AppxPackage -Path $bundlePath -ErrorAction Stop
+        Remove-Item $bundlePath -Force -ErrorAction SilentlyContinue
+        Refresh-PathEnvironment
+        if (Test-CommandAvailable "winget") {
+            Write-Log "Winget successfully bootstrapped." "OK"
+        } else {
+            Write-Log "Winget package registered but binary is not found in PATH." "WARN"
         }
-    }
-
-    if ($downloaded) {
-        try {
-            Add-AppxPackage -Path $bundleFile -ForceApplicationShutdown -ErrorAction Stop
-            Write-Log "Winget package installed." "OK"
-        } catch {
-            Write-Log ("Winget package install failed: {0}" -f $_.Exception.Message) "WARN"
-        }
-    } else {
-        Write-Log "All Winget download mirrors failed." "WARN"
-    }
-
-    Refresh-PathEnvironment
-    if (Test-CommandAvailable "winget") {
-        Write-Log "Winget is ready." "OK"
-    } else {
-        Write-Log "Winget is still unavailable; later package installs may be skipped." "WARN"
+    } catch {
+        Write-Log ("Winget bootstrap failed: {0}" -f $_.Exception.Message) "WARN"
     }
 }
 
 function Ensure-Scoop {
     if (Test-CommandAvailable "scoop") {
-        Write-Log "Scoop is already available." "OK"
+        Write-Log "Scoop is already installed." "OK"
         return
     }
 
     try {
-        Write-Log "Installing Scoop..."
-        $installerFile = Join-Path $env:TEMP "install_scoop.ps1"
-        Invoke-WebRequest -Uri "https://get.scoop.sh" -OutFile $installerFile -UseBasicParsing
-        & $installerFile -RunAsAdmin
-        Remove-Item $installerFile -Force -ErrorAction SilentlyContinue
+        Write-Log "Installing Scoop package manager..."
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+        $scoopInstaller = Join-Path $env:TEMP "install_scoop.ps1"
+        Invoke-RestMethod -Uri "https://get.scoop.sh" -OutFile $scoopInstaller
+        & $scoopInstaller -RunAsAdmin
+        Remove-Item $scoopInstaller -Force -ErrorAction SilentlyContinue
         Refresh-PathEnvironment
         if (Test-CommandAvailable "scoop") {
-            foreach ($bucket in @("extras", "versions", "nerd-fonts")) {
-                scoop bucket add $bucket 2>$null | Out-Null
-            }
-            Write-Log "Scoop installed." "OK"
+            Write-Log "Scoop successfully installed." "OK"
+            scoop bucket add extras 2>$null | Out-Null
+            scoop bucket add main 2>$null | Out-Null
         } else {
-            Write-Log "Scoop installation did not expose the command immediately." "WARN"
+            Write-Log "Scoop installation executed but scoop is not visible in PATH." "WARN"
         }
     } catch {
         Write-Log ("Scoop installation failed: {0}" -f $_.Exception.Message) "WARN"
@@ -372,7 +312,7 @@ function Ensure-Scoop {
 
 function Ensure-Chocolatey {
     if (Test-CommandAvailable "choco") {
-        Write-Log "Chocolatey is already available." "OK"
+        Write-Log "Chocolatey is already installed." "OK"
         return
     }
 
@@ -380,12 +320,12 @@ function Ensure-Chocolatey {
         Write-Log "Installing Chocolatey..."
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString("https://community.chocolatey.org/install.ps1"))
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
         Refresh-PathEnvironment
         if (Test-CommandAvailable "choco") {
-            Write-Log "Chocolatey installed." "OK"
+            Write-Log "Chocolatey successfully installed." "OK"
         } else {
-            Write-Log "Chocolatey installation finished but command is not yet visible." "WARN"
+            Write-Log "Chocolatey installation executed but choco is not in PATH." "WARN"
         }
     } catch {
         Write-Log ("Chocolatey installation failed: {0}" -f $_.Exception.Message) "WARN"
@@ -393,148 +333,92 @@ function Ensure-Chocolatey {
 }
 
 function Ensure-UwpApps {
-    if (-not (Test-CommandAvailable "winget")) {
-        Write-Log "Skipped UWP restore because Winget is unavailable." "WARN"
-        return
-    }
-
     $uwpApps = @(
-        @{ Title = "Photos"; Id = "Microsoft.Windows.Photos" },
-        @{ Title = "Calculator"; Id = "Microsoft.WindowsCalculator" },
-        @{ Title = "Paint"; Id = "Microsoft.Paint" },
-        @{ Title = "Snipping Tool"; Id = "Microsoft.ScreenSketch" },
-        @{ Title = "Alarms & Clock"; Id = "Microsoft.WindowsAlarms" },
-        @{ Title = "Windows Camera"; Id = "Microsoft.WindowsCamera" },
-        @{ Title = "Xbox Game Bar"; Id = "Microsoft.XboxGamingOverlay" },
-        @{ Title = "Windows Terminal"; Id = "Microsoft.WindowsTerminal" }
-    )
-
-    $alternatives = @(
-        @{ Title = "ShareX"; Id = "ShareX.ShareX" },
-        @{ Title = "IrfanView"; Id = "IrfanSkiljan.IrfanView" },
-        @{ Title = "Paint.NET"; Id = "dotPDN.Paint.NET" },
-        @{ Title = "Q-Dir"; Id = "QDir.QDir" }
+        @{ Name = "Microsoft.WindowsCalculator"; Desc = "Calculator" },
+        @{ Name = "Microsoft.Windows.Photos"; Desc = "Photos" },
+        @{ Name = "Microsoft.Paint"; Desc = "Paint" },
+        @{ Name = "Microsoft.ScreenSketch"; Desc = "Snipping Tool" },
+        @{ Name = "Microsoft.WindowsTerminal"; Desc = "Windows Terminal" }
     )
 
     foreach ($app in $uwpApps) {
-        if (Get-AppxPackage -Name $app.Id -AllUsers -ErrorAction SilentlyContinue) {
-            Write-Log ("{0} is already present." -f $app.Title) "OK"
-            continue
-        }
-
-        try {
-            Write-Log ("Installing {0}..." -f $app.Title)
-            winget install --id $app.Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
-            Write-Log ("Completed install request for {0}." -f $app.Title) "OK"
-        } catch {
-            Write-Log ("Failed to restore {0}: {1}" -f $app.Title, $_.Exception.Message) "WARN"
-        }
-    }
-
-    foreach ($app in $alternatives) {
-        $existing = winget list --id $app.Id -e 2>$null | Select-String $app.Id
-        if ($existing) {
-            Write-Log ("Alternative already installed: {0}" -f $app.Title) "OK"
-            continue
-        }
-
-        try {
-            Write-Log ("Installing alternative app: {0}" -f $app.Title)
-            winget install --id $app.Id -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
-            Write-Log ("Installed alternative app: {0}" -f $app.Title) "OK"
-        } catch {
-            Write-Log ("Failed alternative app install for {0}: {1}" -f $app.Title, $_.Exception.Message) "WARN"
+        $installed = Get-AppxPackage -Name $app.Name -ErrorAction SilentlyContinue
+        if ($installed) {
+            Write-Log ("UWP App {0} is already installed." -f $app.Desc) "OK"
+        } else {
+            Write-Log ("Restoring UWP App {0}..." -f $app.Desc)
+            try {
+                $manifest = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter "AppxManifest.xml" -Recurse -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -like ("*{0}*" -f $app.Name) } |
+                    Select-Object -First 1 -ExpandProperty FullName
+                if ($manifest) {
+                    Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction Stop
+                    Write-Log ("Restored UWP App {0} via Appx manifest." -f $app.Desc) "OK"
+                } else {
+                    Write-Log ("Appx manifest for {0} not found." -f $app.Desc) "WARN"
+                }
+            } catch {
+                Write-Log ("Failed to restore {0}: {1}" -f $app.Desc, $_.Exception.Message) "WARN"
+            }
         }
     }
 }
 
 function Invoke-NetworkOptimization {
-    param(
-        [ValidateSet("Basic", "Optimized", "Extreme")]
-        [string]$Mode = "Optimized"
-    )
+    param([string]$Mode)
 
-    foreach ($proto in @("TLS 1.2", "TLS 1.3")) {
-        foreach ($side in @("Client", "Server")) {
-            $path = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\$proto\$side"
-            if (-not (Test-Path $path)) {
-                New-Item -Path $path -Force | Out-Null
-            }
-            New-ItemProperty -Path $path -Name "Enabled" -Value 1 -PropertyType DWORD -Force | Out-Null
-            New-ItemProperty -Path $path -Name "DisabledByDefault" -Value 0 -PropertyType DWORD -Force | Out-Null
-        }
-    }
-    Write-Log "Enabled TLS 1.2/1.3 client and server profiles." "OK"
-
+    Write-Log ("Applying network configuration mode: {0}" -f $Mode) "INFO"
+    
+    # Baseline TLS hardening
     try {
-        $activeInterface = Get-NetConnectionProfile | Where-Object { $_.IPv4Connectivity -eq "Internet" } | Select-Object -First 1
-        if ($activeInterface) {
-            Set-DnsClientServerAddress -InterfaceAlias $activeInterface.InterfaceAlias -ServerAddresses ("1.1.1.1", "8.8.8.8", "223.5.5.5")
-            Write-Log ("Configured DNS for {0}." -f $activeInterface.InterfaceAlias) "OK"
-        }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+        Write-Log "TLS 1.2 and TLS 1.3 enforced for current PowerShell process." "OK"
     } catch {
-        Write-Log ("DNS optimization skipped: {0}" -f $_.Exception.Message) "WARN"
+        Write-Log ("TLS protocol configuration warning: {0}" -f $_.Exception.Message) "WARN"
     }
 
+    if ($Mode -eq "Basic") { return }
+
+    # DNS Flush and Netsh autotuning
     try {
-        netsh winsock reset | Out-Null
-        netsh int ip reset | Out-Null
-        netsh winhttp reset proxy | Out-Null
         ipconfig /flushdns | Out-Null
-        Write-Log "Reset Winsock, IP stack, proxy, and DNS cache." "OK"
+        netsh int tcp set global autotuninglevel=normal | Out-Null
+        Write-Log "TCP autotuning level set to normal and DNS flushed." "OK"
     } catch {
-        Write-Log ("Network reset encountered a warning: {0}" -f $_.Exception.Message) "WARN"
+        Write-Log ("Netsh TCP configuration warning: {0}" -f $_.Exception.Message) "WARN"
     }
 
-    if ($Mode -in @("Optimized", "Extreme")) {
+    if ($Mode -eq "Extreme") {
         try {
-            if ($Mode -eq "Extreme") {
-                netsh int tcp set global autotuninglevel=experimental | Out-Null
-                netsh int tcp set global ecncapability=enabled | Out-Null
-                netsh int tcp set global initialrto=300 | Out-Null
-                netsh int tcp set global maxsynretransmissions=3 | Out-Null
-                netsh int tcp set global pacingprofile=always | Out-Null
-            } else {
-                netsh int tcp set global autotuninglevel=normal | Out-Null
-                netsh int tcp set global ecncapability=enabled | Out-Null
-            }
-
-            netsh int tcp set global timestamps=disabled | Out-Null
-            netsh int tcp set global rss=enabled | Out-Null
-            netsh int tcp set global rsc=enabled | Out-Null
-            netsh int tcp set global nonsackrttresiliency=enabled | Out-Null
-            Set-NetTCPSetting -SettingAlias Internet -CongestionProvider CTCP -ErrorAction SilentlyContinue
-
-            $adapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "Up" }
-            foreach ($nic in $adapters) {
-                Disable-NetAdapterPowerManagement -Name $nic.Name -ErrorAction SilentlyContinue
-            }
-            Write-Log ("Applied {0} network tuning." -f $Mode) "OK"
+            netsh int tcp set global congestionprovider=ctcp | Out-Null
+            netsh int tcp set global ecncapability=enabled | Out-Null
+            Write-Log "Extreme network tuning applied (CTCP & ECN enabled)." "OK"
         } catch {
-            Write-Log ("Advanced network tuning skipped: {0}" -f $_.Exception.Message) "WARN"
+            Write-Log ("Extreme network tuning warning: {0}" -f $_.Exception.Message) "WARN"
         }
     }
 }
 
 function Install-OptionalWindowsFeatures {
     if ($SkipOptionalFeatures) {
-        Write-Log "Optional feature checks skipped by parameter." "INFO"
+        Write-Log "Optional Windows features skipped by parameter." "INFO"
         return
     }
 
     $features = @(
         @{ Name = "Containers-DisposableClientVM"; Desc = "Windows Sandbox" },
-        @{ Name = "Microsoft-Windows-Subsystem-Linux"; Desc = "WSL 2" },
-        @{ Name = "NetFx3"; Desc = ".NET Framework 3.5" }
+        @{ Name = "Microsoft-Windows-Subsystem-Linux"; Desc = "WSL" }
     )
 
     foreach ($feature in $features) {
         try {
-            $status = Get-WindowsOptionalFeature -Online -FeatureName $feature.Name -ErrorAction Stop
-            if ($status.State -eq "Enabled") {
-                Write-Log ("Feature enabled: {0}" -f $feature.Desc) "OK"
+            $state = Get-WindowsOptionalFeature -Online -FeatureName $feature.Name -ErrorAction SilentlyContinue
+            if ($state -and $state.State -eq "Enabled") {
+                Write-Log ("Feature {0} is already enabled." -f $feature.Desc) "OK"
             } else {
-                Write-Log ("Feature available for manual enablement: {0}" -f $feature.Desc) "INFO"
+                Write-Log ("Enabling feature {0}..." -f $feature.Desc)
+                Enable-WindowsOptionalFeature -Online -FeatureName $feature.Name -All -NoRestart -ErrorAction Stop | Out-Null
+                Write-Log ("Enabled feature {0}." -f $feature.Desc) "OK"
             }
         } catch {
             Write-Log ("Feature status check failed for {0}: {1}" -f $feature.Desc, $_.Exception.Message) "WARN"
@@ -650,6 +534,8 @@ function Install-PipPackages {
 }
 
 function Ensure-UvAndTools {
+    param([Parameter(Mandatory = $false)][string[]]$Tools = @("kimi-cli", "ruff"))
+
     if (-not (Test-CommandAvailable "uv")) {
         try {
             Write-Log "Installing uv..."
@@ -667,12 +553,14 @@ function Ensure-UvAndTools {
         return
     }
 
-    try {
-        Write-Log "Installing uv tool: kimi-cli"
-        uv tool install kimi-cli 2>$null | Out-Null
-        Write-Log "uv tool setup completed." "OK"
-    } catch {
-        Write-Log ("uv tool installation failed: {0}" -f $_.Exception.Message) "WARN"
+    foreach ($tool in $Tools) {
+        try {
+            Write-Log ("Installing uv tool: {0}" -f $tool)
+            uv tool install $tool 2>$null | Out-Null
+            Write-Log ("uv tool {0} setup completed." -f $tool) "OK"
+        } catch {
+            Write-Log ("uv tool installation failed for {0}: {1}" -f $tool, $_.Exception.Message) "WARN"
+        }
     }
 }
 
@@ -685,8 +573,9 @@ function Ensure-PowerShell7 {
 
     if (Test-CommandAvailable "winget") {
         try {
-            Write-Log "Installing PowerShell 7 with Winget..."
+            Write-Log "Installing PowerShell 7 via Winget..."
             winget install --id Microsoft.PowerShell -e --silent --accept-package-agreements --accept-source-agreements 2>$null | Out-Null
+            Refresh-PathEnvironment
             if (Test-Path $pwshPath) {
                 Write-Log "PowerShell 7 installed." "OK"
                 return
@@ -696,21 +585,21 @@ function Ensure-PowerShell7 {
         }
     }
 
-    try {
-        Write-Log "Falling back to GitHub release lookup for PowerShell 7..."
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/PowerShell/PowerShell/releases/latest" -Headers @{ "User-Agent" = "Mozilla/5.0" }
-        $msiUrl = $release.assets | Where-Object { $_.name -like "*-win-x64.msi" } | Select-Object -First 1 -ExpandProperty browser_download_url
-        $msiFile = Join-Path $env:TEMP "PowerShell7.msi"
-        Invoke-WebRequest -Uri $msiUrl -OutFile $msiFile -UseBasicParsing
-        Start-Process msiexec.exe -ArgumentList "/i `"$msiFile`" /quiet /norestart" -Wait
-        if (Test-Path $pwshPath) {
-            Write-Log "PowerShell 7 installed successfully." "OK"
-        } else {
-            Write-Log "PowerShell 7 install finished but executable is not yet visible." "WARN"
+    if (Test-CommandAvailable "scoop") {
+        try {
+            Write-Log "Installing PowerShell 7 via Scoop..."
+            scoop install powershell 2>$null | Out-Null
+            Refresh-PathEnvironment
+            if (Test-CommandAvailable "pwsh") {
+                Write-Log "PowerShell 7 installed via Scoop." "OK"
+                return
+            }
+        } catch {
+            Write-Log ("PowerShell 7 Scoop install failed: {0}" -f $_.Exception.Message) "WARN"
         }
-    } catch {
-        Write-Log ("PowerShell 7 installation failed: {0}" -f $_.Exception.Message) "WARN"
     }
+
+    Write-Log "PowerShell 7 installation could not be completed." "WARN"
 }
 
 function Apply-SystemTweaks {
@@ -720,7 +609,7 @@ function Apply-SystemTweaks {
     }
 
     $tweaks = @(
-        @{ Path = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"; Name = "LongPathsEnabled"; Value = 1; Desc = "Long Paths" },
+        @{ Path = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"; Name = "LongPathsEnabled"; Value = 1; Desc = "Long Paths Support" },
         @{ Path = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "HideFileExt"; Value = 0; Desc = "Show File Extensions" },
         @{ Path = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Name = "Hidden"; Value = 1; Desc = "Show Hidden Files" },
         @{ Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock"; Name = "AllowDevelopmentWithoutDevLicense"; Value = 1; Desc = "Developer Mode" }
@@ -785,37 +674,56 @@ $coreApps = @(
 )
 
 $devWingetApps = @(
+    @{ Id = "Microsoft.VisualStudioCode"; Name = "Visual Studio Code" },
+    @{ Id = "Anysphere.Cursor"; Name = "Cursor IDE" },
+    @{ Id = "Brave.Brave"; Name = "Brave Browser" },
+    @{ Id = "LibreWolf.LibreWolf"; Name = "LibreWolf Browser" },
     @{ Id = "Bitwarden.CLI"; Name = "Bitwarden CLI" },
+    @{ Id = "Bitwarden.Bitwarden"; Name = "Bitwarden Desktop" },
     @{ Id = "LocalSend.LocalSend"; Name = "LocalSend" },
     @{ Id = "GnuPG.Gpg4win"; Name = "Gpg4win" },
     @{ Id = "Microsoft.OpenJDK.21"; Name = "OpenJDK 21" },
-    @{ Id = "EFF.Certbot"; Name = "Certbot" }
+    @{ Id = "EFF.Certbot"; Name = "Certbot" },
+    @{ Id = "Cryptomator.Cryptomator"; Name = "Cryptomator" },
+    @{ Id = "RedHat.PodmanDesktop"; Name = "Podman Desktop" },
+    @{ Id = "KDE.Krita"; Name = "Krita" },
+    @{ Id = "Pureref.PureRef"; Name = "PureRef" },
+    @{ Id = "PeaZip.PeaZip"; Name = "PeaZip" },
+    @{ Id = "BlenderFoundation.Blender"; Name = "Blender" }
 )
 
 $scoopTools = @(
-    "git", "gh", "nodejs-lts", "python", "go", "zig", "deno", "fnm", "cmake",
-    "ninja", "pandoc", "ripgrep", "wget", "aria2", "ffmpeg", "imagemagick",
-    "exiftool", "yt-dlp", "gallery-dl", "restic", "7zip", "fdupes", "jdupes",
+    "git", "gh", "git-lfs", "nodejs-lts", "python", "go", "zig", "deno", "fnm", "bun", "pnpm", "cmake",
+    "ninja", "pandoc", "ripgrep", "fd", "fzf", "bat", "eza", "starship", "fastfetch", "sccache", "wget", "aria2",
+    "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "restic", "7zip", "fdupes", "jdupes",
     "parallel", "tree", "sqlite", "nasm", "yasm", "topgrade", "buku", "ollama",
-    "tesseract", "poppler", "lz4", "zstd", "xz", "brotli", "transmission-cli"
+    "tesseract", "poppler", "lz4", "zstd", "xz", "brotli", "transmission-cli", "sing-box", "mihomo",
+    "just", "actionlint", "shellcheck", "shfmt", "chezmoi", "atuin", "direnv"
 )
 
 $cargoPackages = @(
     "bkmr", "cargo-edit", "cargo-expand", "cargo-audit", "cargo-deny", "cargo-hack",
     "cargo-license", "cargo-machete", "cargo-mutants", "cargo-semver-checks", "cargo-udeps",
-    "cargo-bloat", "cargo-about", "cargo-upgrades", "dupe-krill", "fclones", "flamegraph"
+    "cargo-bloat", "cargo-about", "cargo-upgrades", "dupe-krill", "fclones", "flamegraph",
+    "rtk", "kondo", "krokiet", "rust-script", "yek"
 )
 
 $npmPackages = @(
     "@anthropic-ai/claude-code", "acp-ts", "lodash", "openclaw",
-    "opencode-ai", "run-deepseek-cli", "uipro-cli"
+    "opencode-ai", "run-deepseek-cli", "uipro-cli",
+    "@alibaba-group/open-code-review", "@diff4/cli", "context-mode",
+    "pyright", "typescript", "typescript-language-server",
+    "prettier", "markdownlint-cli2"
 )
 
 $pipPackages = @(
     "flask", "flask-cors", "numpy", "scipy", "scikit-learn", "pillow",
     "opencv-python", "torch", "lightgbm", "openvino", "tqdm", "joblib",
-    "sympy", "networkx", "PyWavelets", "certifi", "cryptography", "filelock", "fsspec"
+    "sympy", "networkx", "PyWavelets", "certifi", "cryptography", "filelock", "fsspec",
+    "ruff", "pyupgrade"
 )
+
+$uvToolsList = @("kimi-cli", "ruff")
 
 $script:ConfigurationSummary = [ordered]@{
     NetworkMode = $NetworkMode
@@ -825,6 +733,7 @@ $script:ConfigurationSummary = [ordered]@{
     CargoPackages = $cargoPackages.Count
     NpmPackages = $npmPackages.Count
     PipPackages = $pipPackages.Count
+    UvTools = $uvToolsList.Count
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -887,7 +796,7 @@ if (-not $SkipDevTools) {
 
     Show-Step "Python Packages And uv"
     Install-PipPackages -Packages $pipPackages
-    Ensure-UvAndTools
+    Ensure-UvAndTools -Tools $uvToolsList
 }
 
 Show-Step "PowerShell 7"
