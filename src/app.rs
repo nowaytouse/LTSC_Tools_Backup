@@ -18,43 +18,59 @@ pub struct SetupApp {
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
+    // Statically embed CJK TTF font directly inside binary code segment
+    // This guarantees 100% flawless Chinese text rendering on all Windows LTSC/Server/Lite editions
+    static EMBEDDED_CJK_FONT: &[u8] = include_bytes!("assets/cjk_font.ttf");
+
+    fonts.font_data.insert(
+        "embedded_cjk_font".to_owned(),
+        egui::FontData::from_static(EMBEDDED_CJK_FONT),
+    );
+
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "embedded_cjk_font".to_owned());
+
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .push("embedded_cjk_font".to_owned());
+
+    // System font fallbacks
     #[cfg(target_os = "windows")]
     let font_paths = [
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\msyh.ttf",
-        r"C:\Windows\Fonts\msyhl.ttc",
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\simsun.ttc",
-        r"C:\Windows\Fonts\kaiu.ttf",
     ];
 
     #[cfg(not(target_os = "windows"))]
     let font_paths = [
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     ];
 
-    for path in &font_paths {
+    for (idx, path) in font_paths.iter().enumerate() {
         if let Ok(font_bytes) = std::fs::read(path) {
+            let name = format!("sys_font_{}", idx);
             fonts.font_data.insert(
-                "cjk_font".to_owned(),
+                name.clone(),
                 egui::FontData::from_owned(font_bytes),
             );
-
             fonts
                 .families
                 .entry(egui::FontFamily::Proportional)
                 .or_default()
-                .insert(0, "cjk_font".to_owned());
-
+                .push(name.clone());
             fonts
                 .families
                 .entry(egui::FontFamily::Monospace)
                 .or_default()
-                .push("cjk_font".to_owned());
-
-            break;
+                .push(name);
         }
     }
 
