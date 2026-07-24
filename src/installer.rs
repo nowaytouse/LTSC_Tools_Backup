@@ -4,7 +4,7 @@ use include_dir::{include_dir, Dir, DirEntry};
 use std::path::Path;
 use std::sync::mpsc::Sender;
 
-static ASSETS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets");
+static ASSETS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/assets");
 
 pub struct SetupEngine {
     tx: Sender<LogMessage>,
