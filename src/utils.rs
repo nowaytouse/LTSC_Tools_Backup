@@ -68,5 +68,10 @@ pub fn run_powershell_cmd(cmd_str: &str) -> (bool, String) {
     #[cfg(not(target_os = "windows"))]
     let program = "pwsh";
 
-    run_native_cmd(program, &["-NoProfile", "-Command", cmd_str])
+    let utf8_cmd = format!(
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; {}",
+        cmd_str
+    );
+
+    run_native_cmd(program, &["-NoProfile", "-Command", &utf8_cmd])
 }

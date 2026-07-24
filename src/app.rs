@@ -15,6 +15,52 @@ pub struct SetupApp {
     admin_status: bool,
 }
 
+fn setup_custom_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    #[cfg(target_os = "windows")]
+    let font_paths = [
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\msyh.ttf",
+        r"C:\Windows\Fonts\msyhl.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\simsun.ttc",
+        r"C:\Windows\Fonts\kaiu.ttf",
+    ];
+
+    #[cfg(not(target_os = "windows"))]
+    let font_paths = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ];
+
+    for path in &font_paths {
+        if let Ok(font_bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "cjk_font".to_owned(),
+                egui::FontData::from_owned(font_bytes),
+            );
+
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "cjk_font".to_owned());
+
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .push("cjk_font".to_owned());
+
+            break;
+        }
+    }
+
+    ctx.set_fonts(fonts);
+}
+
 impl Default for SetupApp {
     fn default() -> Self {
         Self {
@@ -33,7 +79,8 @@ impl Default for SetupApp {
 }
 
 impl SetupApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        setup_custom_fonts(&cc.egui_ctx);
         Self::default()
     }
 
