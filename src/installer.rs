@@ -1,5 +1,5 @@
 use crate::config::*;
-use crate::utils::{run_native_cmd, run_powershell_cmd, LogLevel, LogMessage};
+use crate::utils::{run_native_cmd, run_native_cmd_timeout, run_powershell_cmd, LogLevel, LogMessage};
 use include_dir::{include_dir, Dir, DirEntry};
 use std::path::Path;
 use std::sync::mpsc::Sender;
@@ -124,13 +124,13 @@ impl SetupEngine {
         } else {
             self.log(LogLevel::Info, "已跳过开发者 CLI / 工具链配置");
         }
-        self.progress(0.85);
+        self.progress(0.88);
 
         // 11. Local AI Model Pre-pull
         if self.config.include_ollama_models {
             self.step_ollama_models();
         }
-        self.progress(0.90);
+        self.progress(0.92);
 
         // 12. Deep Windows LTSC Optimization Suite
         if self.config.include_deep_win_tweaks {
@@ -138,7 +138,7 @@ impl SetupEngine {
         } else {
             self.log(LogLevel::Info, "已跳过深度 Windows 性能与隐私优化");
         }
-        self.progress(0.96);
+        self.progress(0.97);
 
         // 13. Audit Summary
         self.step_audit();
@@ -387,55 +387,83 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
         self.log(LogLevel::Ok, "VS Code & Cursor 偏好设置 settings.json 已部署");
 
         // Install Extensions
-        for ext in get_vscode_extensions() {
-            let (ok1, _) = run_native_cmd("code", &["--install-extension", ext]);
-            let (ok2, _) = run_native_cmd("cursor", &["--install-extension", ext]);
+        let exts = get_vscode_extensions();
+        let total_exts = exts.len();
+        for (i, ext) in exts.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[{}/{}] 正在同步 IDE 扩展: {}...", i + 1, total_exts, ext));
+            let (ok1, _) = run_native_cmd_timeout("code", &["--install-extension", ext], 30);
+            let (ok2, _) = run_native_cmd_timeout("cursor", &["--install-extension", ext], 30);
             if ok1 || ok2 {
                 self.log(LogLevel::Ok, format!("IDE 扩展: {} [安装完成]", ext));
             } else {
-                self.log(LogLevel::Warn, format!("IDE 扩展: {} [已就绪/跳过]", ext));
+                self.log(LogLevel::Warn, format!("IDE 扩展: {} [跳过/就绪]", ext));
             }
+            self.progress(0.58 + (i as f32 / total_exts as f32) * 0.07);
         }
     }
 
     fn step_core_apps(&self) {
         self.log(LogLevel::Info, "批量部署核心桌面软件 (Chrome / VLC / 7-Zip / ShareX / IrfanView)...");
-        for app in get_core_winget_apps() {
+        let apps = get_core_winget_apps();
+        let total = apps.len();
+        for (i, app) in apps.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[{}/{}] 正在处理核心应用: {}...", i + 1, total, app.name));
             self.install_winget_app(&app.id, &app.name);
+            self.progress(0.65 + (i as f32 / total as f32) * 0.07);
         }
     }
 
     fn step_dev_suite(&self) {
         self.log(LogLevel::Info, "开始部署 100+ 开发者 IDE 及 CLI 工具套件 (macOS 100% 同等能力)...");
 
-        // Dev Winget Apps
-        self.log(LogLevel::Info, "安装开发 IDE、沟通与桌面软件 (VS Code, Cursor, Podman, Krita, Bitwarden, ChatGPT, Claude)...");
-        for app in get_dev_winget_apps() {
+        // 1. Dev Winget Apps
+        let dev_apps = get_dev_winget_apps();
+        let total_apps = dev_apps.len();
+        self.log(LogLevel::Info, format!("准备部署 {} 款开发与桌面软件 (Winget)...", total_apps));
+        for (i, app) in dev_apps.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[Winget {}/{}] 正在安装: {} ({})", i + 1, total_apps, app.name, app.id));
             self.install_winget_app(&app.id, &app.name);
+            self.progress(0.72 + (i as f32 / total_apps as f32) * 0.05);
         }
 
-        // Scoop Tools
-        self.log(LogLevel::Info, "安装 Scoop 全量 CLI 工具 (git, ripgrep, fd, fzf, bat, eza, starship, fastfetch, sccache, sing-box, mihomo)...");
-        for tool in get_scoop_tools() {
+        // 2. Scoop Tools
+        let scoop_tools = get_scoop_tools();
+        let total_scoop = scoop_tools.len();
+        self.log(LogLevel::Info, format!("准备部署 {} 款 CLI 工具 (Scoop)...", total_scoop));
+        for (i, tool) in scoop_tools.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[Scoop {}/{}] 正在安装: {}...", i + 1, total_scoop, tool));
             self.install_scoop_tool(tool);
+            self.progress(0.77 + (i as f32 / total_scoop as f32) * 0.04);
         }
 
-        // Rust Cargo Packages
-        self.log(LogLevel::Info, "安装 Cargo 工具套件 (rtk, kondo, krokiet, rust-script, yek)...");
-        for cargo_pkg in get_cargo_packages() {
+        // 3. Rust Cargo Packages
+        let cargo_pkgs = get_cargo_packages();
+        let total_cargo = cargo_pkgs.len();
+        self.log(LogLevel::Info, format!("准备部署 {} 款 Cargo 工具套件...", total_cargo));
+        for (i, cargo_pkg) in cargo_pkgs.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[Cargo {}/{}] 正在检查/编译安装: {}...", i + 1, total_cargo, cargo_pkg));
             self.install_cargo_package(cargo_pkg);
+            self.progress(0.81 + (i as f32 / total_cargo as f32) * 0.03);
         }
 
-        // NPM Globals
-        self.log(LogLevel::Info, "安装 NPM 全局 CLI & AI 工具包 (@anthropic-ai/claude-code, opencode-ai, pyright, context-mode)...");
-        for npm_pkg in get_npm_globals() {
+        // 4. NPM Globals
+        let npm_pkgs = get_npm_globals();
+        let total_npm = npm_pkgs.len();
+        self.log(LogLevel::Info, format!("准备部署 {} 款 NPM 全局包...", total_npm));
+        for (i, npm_pkg) in npm_pkgs.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[NPM {}/{}] 正在安装: {}...", i + 1, total_npm, npm_pkg));
             self.install_npm_global(npm_pkg);
+            self.progress(0.84 + (i as f32 / total_npm as f32) * 0.02);
         }
 
-        // Pip & UV
-        self.log(LogLevel::Info, "安装 Python 依赖库及 UV 全局工具 (kimi-cli, ruff)...");
-        for pip_pkg in get_pip_packages() {
+        // 5. Pip & UV
+        let pip_pkgs = get_pip_packages();
+        let total_pip = pip_pkgs.len();
+        self.log(LogLevel::Info, format!("准备部署 {} 款 Python 包与 UV 工具...", total_pip));
+        for (i, pip_pkg) in pip_pkgs.iter().enumerate() {
+            self.log(LogLevel::Info, format!("[Pip {}/{}] 正在安装: {}...", i + 1, total_pip, pip_pkg));
             self.install_pip_package(pip_pkg);
+            self.progress(0.86 + (i as f32 / total_pip as f32) * 0.01);
         }
         for uv_tool in get_uv_tools() {
             self.install_uv_tool(uv_tool);
@@ -444,7 +472,7 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
 
     fn step_ollama_models(&self) {
         self.log(LogLevel::Info, "检查并拉取本地 AI 模型 (Ollama: qwen2.5-coder)...");
-        let (ok, _) = run_native_cmd("ollama", &["pull", "qwen2.5-coder"]);
+        let (ok, _) = run_native_cmd_timeout("ollama", &["pull", "qwen2.5-coder"], 120);
         if ok {
             self.log(LogLevel::Ok, "本地 AI 模型 qwen2.5-coder 已拉取/就绪");
         } else {
@@ -506,56 +534,70 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
     }
 
     fn install_winget_app(&self, id: &str, name: &str) {
-        let (ok, _) = run_native_cmd("winget", &["install", "--id", id, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements"]);
+        let (ok, _) = run_native_cmd_timeout(
+            "winget",
+            &[
+                "install",
+                "--id",
+                id,
+                "-e",
+                "--silent",
+                "--disable-interactivity",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+                "--force",
+            ],
+            45,
+        );
         if ok {
             self.log(LogLevel::Ok, format!("Winget 应用: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Winget 应用: {} [跳过/已存在]", name));
+            self.log(LogLevel::Warn, format!("Winget 应用: {} [跳过/已存在/超时]", name));
         }
     }
 
     fn install_scoop_tool(&self, name: &str) {
-        let (ok, _) = run_native_cmd("scoop", &["install", name]);
+        let (ok, _) = run_native_cmd_timeout("scoop", &["install", name], 30);
         if ok {
             self.log(LogLevel::Ok, format!("Scoop 工具: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Scoop 工具: {} [跳过/已存在]", name));
+            self.log(LogLevel::Warn, format!("Scoop 工具: {} [跳过/已存在/超时]", name));
         }
     }
 
     fn install_cargo_package(&self, name: &str) {
-        let (ok, _) = run_native_cmd("cargo", &["install", name]);
+        let (ok, _) = run_native_cmd_timeout("cargo", &["install", name], 60);
         if ok {
             self.log(LogLevel::Ok, format!("Cargo 包: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Cargo 包: {} [跳过/已存在]", name));
+            self.log(LogLevel::Warn, format!("Cargo 包: {} [跳过/已存在/超时]", name));
         }
     }
 
     fn install_npm_global(&self, name: &str) {
-        let (ok, _) = run_native_cmd("npm", &["install", "-g", name, "--loglevel=error"]);
+        let (ok, _) = run_native_cmd_timeout("npm", &["install", "-g", name, "--loglevel=error"], 30);
         if ok {
             self.log(LogLevel::Ok, format!("NPM 包: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("NPM 包: {} [跳过/已存在]", name));
+            self.log(LogLevel::Warn, format!("NPM 包: {} [跳过/已存在/超时]", name));
         }
     }
 
     fn install_pip_package(&self, name: &str) {
-        let (ok, _) = run_native_cmd("pip", &["install", name, "--quiet"]);
+        let (ok, _) = run_native_cmd_timeout("pip", &["install", name, "--quiet"], 20);
         if ok {
             self.log(LogLevel::Ok, format!("Pip 包: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Pip 包: {} [跳过/已存在]", name));
+            self.log(LogLevel::Warn, format!("Pip 包: {} [跳过/已存在/超时]", name));
         }
     }
 
     fn install_uv_tool(&self, name: &str) {
-        let (ok, _) = run_native_cmd("uv", &["tool", "install", name]);
+        let (ok, _) = run_native_cmd_timeout("uv", &["tool", "install", name], 20);
         if ok {
             self.log(LogLevel::Ok, format!("UV 工具: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("UV 工具: {} [跳过/已存在]", name));
+            self.log(LogLevel::Warn, format!("UV 工具: {} [跳过/已存在/超时]", name));
         }
     }
 }
