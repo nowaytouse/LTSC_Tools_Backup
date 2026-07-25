@@ -1,4 +1,4 @@
-use crate::config::{ExecutionTarget, NetworkMode, SetupConfig};
+use crate::config::{ExecutionTarget, NetworkMode, SetupConfig, SetupProfile};
 use crate::installer::SetupEngine;
 use crate::utils::{is_admin, LogLevel, LogMessage};
 use eframe::egui;
@@ -13,13 +13,14 @@ pub struct SetupApp {
     log_rx: Option<Receiver<LogMessage>>,
     progress_rx: Option<Receiver<f32>>,
     admin_status: bool,
+    json_editor_text: String,
+    show_json_editor: bool,
+    json_editor_error: Option<String>,
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Statically embed CJK TTF font directly inside binary code segment
-    // This guarantees 100% flawless Chinese text rendering on all Windows LTSC/Server/Lite editions
     static EMBEDDED_CJK_FONT: &[u8] = include_bytes!("assets/cjk_font.ttf");
 
     fonts.font_data.insert(
@@ -39,7 +40,6 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         .or_default()
         .push("embedded_cjk_font".to_owned());
 
-    // System font fallbacks
     #[cfg(target_os = "windows")]
     let font_paths = [
         r"C:\Windows\Fonts\msyh.ttc",
@@ -79,17 +79,22 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 
 impl Default for SetupApp {
     fn default() -> Self {
+        let config = SetupConfig::default();
+        let json_text = serde_json::to_string_pretty(&config.profile).unwrap_or_default();
         Self {
-            config: SetupConfig::default(),
+            config,
             is_running: false,
             progress: 0.0,
             logs: vec![LogMessage::new(
                 LogLevel::Info,
-                "欢迎使用 Windows LTSC 终极一键配置环境 GUI 工具。包含 macOS 100% 同等能力软件库、VS Code/Cursor 插件、Agent Skills、Git账号、Docker/WSL2 及深度性能优化。"
+                "欢迎使用 Windows LTSC 显式配置工作站 GUI 工具。已成功从 setup_profile.json 加载全量显式环境清单。"
             )],
             log_rx: None,
             progress_rx: None,
             admin_status: is_admin(),
+            json_editor_text: json_text,
+            show_json_editor: false,
+            json_editor_error: None,
         }
     }
 }
@@ -105,10 +110,21 @@ impl SetupApp {
             return;
         }
 
+        // Apply any JSON editor text updates if currently viewing editor
+        if self.show_json_editor {
+            if let Ok(profile) = serde_json::from_str::<SetupProfile>(&self.json_editor_text) {
+                self.config.profile = profile;
+                self.json_editor_error = None;
+            } else {
+                self.json_editor_error = Some("JSON 语法解析失败，请检查语法".to_string());
+                return;
+            }
+        }
+
         self.is_running = true;
         self.progress = 0.01;
         self.logs.clear();
-        self.logs.push(LogMessage::new(LogLevel::Start, "初始化终极配置引擎线程..."));
+        self.logs.push(LogMessage::new(LogLevel::Start, "初始化显式配置引擎线程..."));
 
         let (log_tx, log_rx): (Sender<LogMessage>, Receiver<LogMessage>) = channel();
         let (progress_tx, progress_rx): (Sender<f32>, Receiver<f32>) = channel();
@@ -145,6 +161,12 @@ impl SetupApp {
         let _ = std::fs::write(&log_file, content);
     }
 
+    fn export_profile_json(&self) {
+        let home_dir = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".to_string());
+        let json_file = std::path::Path::new(&home_dir).join("Desktop").join("setup_profile.json");
+        let _ = self.config.profile.save_to_file(&json_file);
+    }
+
     fn poll_updates(&mut self) {
         if let Some(ref rx) = self.log_rx {
             while let Ok(msg) = rx.try_recv() {
@@ -174,7 +196,7 @@ impl eframe::App for SetupApp {
         egui::TopBottomPanel::top("header_panel").show(ctx, |ui| {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.heading("🚀 Windows LTSC Ultimate Workstation Setup");
+                ui.heading("🚀 Windows LTSC Ultimate Workstation Setup (Explicit JSON Engine)");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.admin_status {
                         ui.label(egui::RichText::new("🛡️ 管理员权限: 已具备").color(egui::Color32::GREEN).strong());
@@ -191,44 +213,74 @@ impl eframe::App for SetupApp {
                 // Left Column: Controls & Settings
                 columns[0].vertical(|ui| {
                     ui.group(|ui| {
-                        ui.heading("⚙️ 全量配置与优化选项");
-                        ui.add_space(4.0);
-
-                        ui.checkbox(&mut self.config.include_dev_tools, "💻 部署全套 100+ 开发者软件库 (macOS 100% 对齐)");
-                        ui.label(egui::RichText::new("VS Code, Cursor, Git, Python, Node, Rust, rtk, claude-code, kimi-cli, sing-box 等").small().color(egui::Color32::GRAY));
-
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.config.include_vscode_extensions, "🧩 同步 VS Code / Cursor 扩展插件与 settings.json");
-                        ui.label(egui::RichText::new("包含 Python, Go, Docker, Vim, GitLens, MarkdownLint, Claude-Code 插件").small().color(egui::Color32::GRAY));
-
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.config.include_git_shell_configs, "🔑 部署 Git 用户全量配置 & PowerShell 7 Profile 自动化");
-                        ui.label(egui::RichText::new("包含 nowaytouse Git 账号、500MB PostBuffer、Starship / Zoxide / UTF-8 初始化").small().color(egui::Color32::GRAY));
-
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.config.include_agent_skills, "🤖 同步 55+ 真实 AI Agent Skills / Hooks / 规则 (.gemini/config)");
-                        ui.label(egui::RichText::new("建立 AGENTS.md 全局规则、rtk token-killer 与 lean-ctx 语境工具链").small().color(egui::Color32::GRAY));
-
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.config.include_docker_wsl, "🐳 部署 Docker & WSL2 虚拟化内核平台");
-                        ui.label(egui::RichText::new("开启 VirtualMachinePlatform、WSL2 及 Docker/Podman Engine").small().color(egui::Color32::GRAY));
-
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.config.include_deep_win_tweaks, "🚀 Windows LTSC 深度性能与隐私优化");
-                        ui.label(egui::RichText::new("解锁卓越性能模式、禁用 Telemetry/Bing 搜索、优化资源管理器与 CPU/内存响应").small().color(egui::Color32::GRAY));
-
-                        ui.add_space(4.0);
-                        ui.checkbox(&mut self.config.include_ollama_models, "🧠 自动预拉取本地 AI 模型 (Ollama: qwen2.5-coder)");
-
-                        ui.add_space(6.0);
-                        ui.label("🌐 网络、代理与 WinHTTP 优化模式:");
-                        egui::ComboBox::from_id_salt("net_mode_combo")
-                            .selected_text(format!("{}", self.config.network_mode))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.config.network_mode, NetworkMode::Basic, "Basic (基础 TLS/DNS 协议硬化)");
-                                ui.selectable_value(&mut self.config.network_mode, NetworkMode::Optimized, "Optimized (刷新 DNS & 优化 TCP 窗口)");
-                                ui.selectable_value(&mut self.config.network_mode, NetworkMode::Extreme, "Extreme (CTCP & ECN + WinHTTP 代理)");
+                        ui.horizontal(|ui| {
+                            ui.heading("⚙️ 显式配置表与开关");
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button(if self.show_json_editor { "📋 返回主面板" } else { "📜 查看/编辑 JSON 配置" }).clicked() {
+                                    self.show_json_editor = !self.show_json_editor;
+                                }
                             });
+                        });
+                        ui.add_space(4.0);
+
+                        if self.show_json_editor {
+                            ui.label(egui::RichText::new("JSON 配置表 (setup_profile.json): 可直接在此修改参数/软件列表").small().color(egui::Color32::LIGHT_BLUE));
+                            if let Some(ref err) = self.json_editor_error {
+                                ui.label(egui::RichText::new(err).color(egui::Color32::RED));
+                            }
+                            egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.json_editor_text)
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_width(f32::INFINITY)
+                                );
+                            });
+                        } else {
+                            let pkgs = &self.config.profile.packages;
+                            let ext_len = self.config.profile.vscode_config.extensions.len();
+
+                            ui.label(egui::RichText::new(format!(
+                                "📊 显式软件矩阵: {} Winget, {} Scoop, {} Cargo, {} NPM, {} Pip, {} IDE 插件",
+                                pkgs.winget_core.len() + pkgs.winget_dev.len(),
+                                pkgs.scoop_tools.len(),
+                                pkgs.cargo_packages.len(),
+                                pkgs.npm_globals.len(),
+                                pkgs.pip_packages.len(),
+                                ext_len
+                            )).strong().color(egui::Color32::LIGHT_GREEN));
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_dev_tools, format!("💻 部署 100+ 开发者软件库 ({} 个包已定义)", pkgs.winget_dev.len() + pkgs.scoop_tools.len() + pkgs.cargo_packages.len()));
+                            ui.label(egui::RichText::new("VS Code, Cursor, Git, Python, Node, Rust, rtk, claude-code, kimi-cli 等").small().color(egui::Color32::GRAY));
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_vscode_extensions, format!("🧩 同步 VS Code / Cursor 扩展 ({} 款) 与 settings.json", ext_len));
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_git_shell_configs, format!("🔑 部署 Git 用户 ({}) & PowerShell Profile 别名", self.config.profile.git_config.user_name));
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_agent_skills, "🤖 同步 55+ 真实 AI Agent Skills / Hooks (.gemini/config)");
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_docker_wsl, "🐳 部署 Docker & WSL2 虚拟化内核平台");
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_deep_win_tweaks, "🚀 Windows LTSC 深度性能与隐私优化");
+
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut self.config.include_ollama_models, format!("🧠 自动预拉取本地 AI 模型 ({})", self.config.profile.ollama_models.join(", ")));
+
+                            ui.add_space(6.0);
+                            ui.label("🌐 网络与 WinHTTP 代理模式:");
+                            egui::ComboBox::from_id_salt("net_mode_combo")
+                                .selected_text(format!("{}", self.config.network_mode))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.config.network_mode, NetworkMode::Basic, "Basic (基础 TLS/DNS 协议硬化)");
+                                    ui.selectable_value(&mut self.config.network_mode, NetworkMode::Optimized, "Optimized (刷新 DNS & 优化 TCP 窗口)");
+                                    ui.selectable_value(&mut self.config.network_mode, NetworkMode::Extreme, "Extreme (CTCP & ECN + WinHTTP 代理)");
+                                });
+                        }
                     });
 
                     ui.add_space(8.0);
@@ -268,7 +320,10 @@ impl eframe::App for SetupApp {
                         ui.horizontal(|ui| {
                             ui.heading("📋 实时日志与进度");
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("💾 导出日志到桌面").clicked() {
+                                if ui.button("📂 导出 JSON 配置到桌面").clicked() {
+                                    self.export_profile_json();
+                                }
+                                if ui.button("💾 导出日志").clicked() {
                                     self.export_logs();
                                 }
                             });

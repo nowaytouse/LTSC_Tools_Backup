@@ -1,0 +1,161 @@
+{
+  "profile_version": "1.0.0",
+  "metadata": {
+    "name": "macOS Host Environment Parity Profile for Windows LTSC",
+    "author": "nowaytouse",
+    "description": "Explicit workstation setup specification defining all packages, git identity, IDE extensions, agent skills, and system registry tweaks."
+  },
+  "git_config": {
+    "user_name": "nowaytouse",
+    "user_email": "104445933+nowaytouse@users.noreply.github.com",
+    "post_buffer_bytes": 524288000,
+    "safe_directory": "*",
+    "enable_long_paths": true,
+    "enable_autocrlf": true,
+    "global_gitignore_rules": [
+      "**/.cursor/.agent-tools",
+      "**/.cursor/.agent-notes",
+      ".DS_Store",
+      "**/.claude/settings.local.json",
+      "AGENTS.local.md",
+      "*.local.md"
+    ]
+  },
+  "powershell_profile": {
+    "enable_utf8_encoding": true,
+    "init_starship": true,
+    "init_zoxide": true,
+    "aliases": {
+      "g": "git",
+      "ls": "eza",
+      "ll": "eza -lah",
+      "cat": "bat",
+      "find": "fd",
+      "grep": "ripgrep",
+      "top": "fastfetch"
+    }
+  },
+  "network_config": {
+    "mode": "Optimized",
+    "enable_tls12_tls13": true,
+    "flush_dns": true,
+    "enable_ctcp": true,
+    "enable_ecn": true,
+    "import_winhttp_proxy": true
+  },
+  "environment_mirrors": {
+    "cargo_sparse_index": "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/",
+    "pip_index_url": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    "npm_registry": "https://registry.npmmirror.com"
+  },
+  "vscode_config": {
+    "user_settings": {
+      "cursor.composer.usageSummaryDisplay": "always",
+      "window.autoDetectColorScheme": true,
+      "editor.largeFileOptimizations": false,
+      "diffEditor.maxComputationTime": 0,
+      "editor.accessibilitySupport": "on",
+      "explorer.confirmDragAndDrop": false,
+      "workbench.preferredLightColorTheme": "Default Dark Modern",
+      "vim.disableExtension": true,
+      "cursor.composer.conversationDensity": "detailed"
+    },
+    "extensions": [
+      "anthropic.claude-code",
+      "anysphere.cursorpyright",
+      "anysphere.remote-containers",
+      "anysphere.remote-ssh",
+      "davidanson.vscode-markdownlint",
+      "donjayamanne.githistory",
+      "eamodio.gitlens",
+      "github.vscode-github-actions",
+      "golang.go",
+      "ms-azuretools.vscode-docker",
+      "ms-python.python",
+      "ms-python.debugpy",
+      "vscodevim.vim"
+    ]
+  },
+  "packages": {
+    "winget_core": [
+      { "id": "7zip.7zip", "name": "7-Zip Archiver" },
+      { "id": "VideoLAN.VLC", "name": "VLC Media Player" },
+      { "id": "Google.Chrome", "name": "Google Chrome" },
+      { "id": "Notepad++.Notepad++", "name": "Notepad++" },
+      { "id": "ShareX.ShareX", "name": "ShareX Productivity" },
+      { "id": "IrfanSkiljan.IrfanView", "name": "IrfanView Media Viewer" }
+    ],
+    "winget_dev": [
+      { "id": "Microsoft.VisualStudioCode", "name": "Visual Studio Code" },
+      { "id": "Anysphere.Cursor", "name": "Cursor AI IDE" },
+      { "id": "Brave.Brave", "name": "Brave Browser" },
+      { "id": "LibreWolf.LibreWolf", "name": "LibreWolf Privacy Browser" },
+      { "id": "Bitwarden.CLI", "name": "Bitwarden CLI" },
+      { "id": "Bitwarden.Bitwarden", "name": "Bitwarden Desktop" },
+      { "id": "LocalSend.LocalSend", "name": "LocalSend File Transfer" },
+      { "id": "GnuPG.Gpg4win", "name": "Gpg4win Security Suite" },
+      { "id": "Microsoft.OpenJDK.21", "name": "Microsoft OpenJDK 21" },
+      { "id": "EFF.Certbot", "name": "Certbot SSL Tool" },
+      { "id": "Cryptomator.Cryptomator", "name": "Cryptomator Vault" },
+      { "id": "Docker.DockerDesktop", "name": "Docker Desktop" },
+      { "id": "RedHat.PodmanDesktop", "name": "Podman Desktop" },
+      { "id": "KDE.Krita", "name": "Krita Digital Painting" },
+      { "id": "Pureref.PureRef", "name": "PureRef Reference Board" },
+      { "id": "Aseprite.Aseprite", "name": "Aseprite Pixel Art" },
+      { "id": "BlenderFoundation.Blender", "name": "Blender 3D Creation" },
+      { "id": "PeaZip.PeaZip", "name": "PeaZip Utility" },
+      { "id": "Discord.Discord", "name": "Discord Desktop" },
+      { "id": "Telegram.TelegramDesktop", "name": "Telegram Desktop" },
+      { "id": "OpenAI.ChatGPT", "name": "ChatGPT Desktop" },
+      { "id": "Anthropic.Claude", "name": "Claude Desktop" },
+      { "id": "Valve.Steam", "name": "Steam Gaming Client" }
+    ],
+    "scoop_tools": [
+      "git", "gh", "git-lfs", "restic", "chezmoi", "atuin", "direnv", "starship", "fastfetch",
+      "python", "nodejs-lts", "go", "zig", "deno", "fnm", "bun", "pnpm", "neovim", "tmux", "mise",
+      "cmake", "ninja", "nasm", "yasm", "sccache", "just", "mold", "gcc",
+      "ripgrep", "fd", "fzf", "bat", "eza", "topgrade", "tree", "fdupes", "jdupes", "parallel", "b3sum", "xxhash",
+      "actionlint", "shellcheck", "shfmt",
+      "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract",
+      "aria2", "wget", "buku", "lz4", "zstd", "xz", "brotli", "sqlite", "postgresql",
+      "sing-box", "mihomo", "nextdns", "smartdns",
+      "ollama", "whisper-cpp"
+    ],
+    "cargo_packages": [
+      "rtk", "bkmr", "yek",
+      "cargo-edit", "cargo-expand", "cargo-audit", "cargo-deny", "cargo-hack",
+      "cargo-license", "cargo-machete", "cargo-mutants", "cargo-semver-checks", "cargo-udeps",
+      "cargo-bloat", "cargo-about", "cargo-upgrades", "rust-script", "flamegraph",
+      "dupe-krill", "fclones", "kondo", "krokiet"
+    ],
+    "npm_globals": [
+      "@anthropic-ai/claude-code", "@alibaba-group/open-code-review", "@diff4/cli",
+      "acp-ts", "context-mode", "lodash", "openclaw", "opencode-ai",
+      "pyright", "run-deepseek-cli", "typescript", "typescript-language-server",
+      "uipro-cli", "prettier", "markdownlint-cli2"
+    ],
+    "pip_packages": [
+      "flask", "flask-cors", "numpy", "scipy", "scikit-learn", "pillow",
+      "opencv-python", "torch", "lightgbm", "openvino", "tqdm", "joblib",
+      "sympy", "networkx", "PyWavelets", "certifi", "cryptography", "filelock", "fsspec",
+      "ruff", "pyupgrade"
+    ],
+    "uv_tools": [
+      "kimi-cli", "ruff"
+    ]
+  },
+  "system_tweaks": {
+    "activate_ultimate_performance": true,
+    "disable_telemetry": true,
+    "disable_bing_search": true,
+    "explorer_open_to_this_pc": true,
+    "explorer_show_file_extensions": true,
+    "explorer_show_hidden_files": true,
+    "enable_ntfs_long_paths": true,
+    "system_responsiveness": 0,
+    "network_throttling_index": 4294967295
+  },
+  "ollama_models": [
+    "qwen2.5-coder"
+  ]
+}

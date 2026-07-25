@@ -12,7 +12,7 @@ impl std::fmt::Display for NetworkMode {
         match self {
             NetworkMode::Basic => write!(f, "Basic (基础 TLS/DNS 协议硬化)"),
             NetworkMode::Optimized => write!(f, "Optimized (刷新 DNS & 优化 TCP 窗口)"),
-            NetworkMode::Extreme => write!(f, "Extreme (CTCP & ECN + WinHTTP 代理同步)"),
+            NetworkMode::Extreme => write!(f, "Extreme (CTCP & ECN + WinHTTP 代理)"),
         }
     }
 }
@@ -34,6 +34,110 @@ pub struct WingetApp {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitProfileConfig {
+    pub user_name: String,
+    pub user_email: String,
+    pub post_buffer_bytes: u64,
+    pub safe_directory: String,
+    pub enable_long_paths: bool,
+    pub enable_autocrlf: bool,
+    pub global_gitignore_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PowerShellProfileConfig {
+    pub enable_utf8_encoding: bool,
+    pub init_starship: bool,
+    pub init_zoxide: bool,
+    pub aliases: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkProfileConfig {
+    pub mode: String,
+    pub enable_tls12_tls13: bool,
+    pub flush_dns: bool,
+    pub enable_ctcp: bool,
+    pub enable_ecn: bool,
+    pub import_winhttp_proxy: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MirrorsProfileConfig {
+    pub cargo_sparse_index: String,
+    pub pip_index_url: String,
+    pub npm_registry: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VSCodeProfileConfig {
+    pub user_settings: serde_json::Value,
+    pub extensions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageMatrixConfig {
+    pub winget_core: Vec<WingetApp>,
+    pub winget_dev: Vec<WingetApp>,
+    pub scoop_tools: Vec<String>,
+    pub cargo_packages: Vec<String>,
+    pub npm_globals: Vec<String>,
+    pub pip_packages: Vec<String>,
+    pub uv_tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemTweaksProfileConfig {
+    pub activate_ultimate_performance: bool,
+    pub disable_telemetry: bool,
+    pub disable_bing_search: bool,
+    pub explorer_open_to_this_pc: bool,
+    pub explorer_show_file_extensions: bool,
+    pub explorer_show_hidden_files: bool,
+    pub enable_ntfs_long_paths: bool,
+    pub system_responsiveness: u32,
+    pub network_throttling_index: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupProfile {
+    pub profile_version: String,
+    pub metadata: serde_json::Value,
+    pub git_config: GitProfileConfig,
+    pub powershell_profile: PowerShellProfileConfig,
+    pub network_config: NetworkProfileConfig,
+    pub environment_mirrors: MirrorsProfileConfig,
+    pub vscode_config: VSCodeProfileConfig,
+    pub packages: PackageMatrixConfig,
+    pub system_tweaks: SystemTweaksProfileConfig,
+    pub ollama_models: Vec<String>,
+}
+
+impl SetupProfile {
+    pub fn load_default() -> Self {
+        let json_bytes = include_bytes!("assets/setup_profile.json");
+        serde_json::from_slice(json_bytes).unwrap_or_else(|e| {
+            eprintln!("Failed to parse default setup_profile.json: {}", e);
+            panic!("Invalid default setup_profile.json embedded payload");
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn load_from_file(path: &std::path::Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let profile = serde_json::from_str(&content)?;
+        Ok(profile)
+    }
+
+    #[allow(dead_code)]
+    pub fn save_to_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupConfig {
     pub include_dev_tools: bool,
     pub include_optional_features: bool,
@@ -47,6 +151,7 @@ pub struct SetupConfig {
     pub include_ollama_models: bool,
     pub network_mode: NetworkMode,
     pub target_mode: ExecutionTarget,
+    pub profile: SetupProfile,
 }
 
 impl Default for SetupConfig {
@@ -64,125 +169,7 @@ impl Default for SetupConfig {
             include_ollama_models: true,
             network_mode: NetworkMode::Optimized,
             target_mode: ExecutionTarget::FullSetup,
+            profile: SetupProfile::load_default(),
         }
     }
-}
-
-pub fn get_core_winget_apps() -> Vec<WingetApp> {
-    vec![
-        WingetApp { id: "7zip.7zip".to_string(), name: "7-Zip Archiver".to_string() },
-        WingetApp { id: "VideoLAN.VLC".to_string(), name: "VLC Media Player".to_string() },
-        WingetApp { id: "Google.Chrome".to_string(), name: "Google Chrome".to_string() },
-        WingetApp { id: "Notepad++.Notepad++".to_string(), name: "Notepad++".to_string() },
-        WingetApp { id: "ShareX.ShareX".to_string(), name: "ShareX Productivity".to_string() },
-        WingetApp { id: "IrfanSkiljan.IrfanView".to_string(), name: "IrfanView Media Viewer".to_string() },
-    ]
-}
-
-pub fn get_dev_winget_apps() -> Vec<WingetApp> {
-    vec![
-        // IDEs & Browsers (100% Homebrew Cask Parity)
-        WingetApp { id: "Microsoft.VisualStudioCode".to_string(), name: "Visual Studio Code".to_string() },
-        WingetApp { id: "Anysphere.Cursor".to_string(), name: "Cursor AI IDE".to_string() },
-        WingetApp { id: "Brave.Brave".to_string(), name: "Brave Browser".to_string() },
-        WingetApp { id: "LibreWolf.LibreWolf".to_string(), name: "LibreWolf Privacy Browser".to_string() },
-        // Developer & Security
-        WingetApp { id: "Bitwarden.CLI".to_string(), name: "Bitwarden CLI".to_string() },
-        WingetApp { id: "Bitwarden.Bitwarden".to_string(), name: "Bitwarden Desktop".to_string() },
-        WingetApp { id: "LocalSend.LocalSend".to_string(), name: "LocalSend File Transfer".to_string() },
-        WingetApp { id: "GnuPG.Gpg4win".to_string(), name: "Gpg4win Security Suite".to_string() },
-        WingetApp { id: "Microsoft.OpenJDK.21".to_string(), name: "Microsoft OpenJDK 21".to_string() },
-        WingetApp { id: "EFF.Certbot".to_string(), name: "Certbot SSL Tool".to_string() },
-        WingetApp { id: "Cryptomator.Cryptomator".to_string(), name: "Cryptomator Vault".to_string() },
-        // Virtualization & Containers
-        WingetApp { id: "Docker.DockerDesktop".to_string(), name: "Docker Desktop".to_string() },
-        WingetApp { id: "RedHat.PodmanDesktop".to_string(), name: "Podman Desktop".to_string() },
-        // Graphics & Design
-        WingetApp { id: "KDE.Krita".to_string(), name: "Krita Digital Painting".to_string() },
-        WingetApp { id: "Pureref.PureRef".to_string(), name: "PureRef Reference Board".to_string() },
-        WingetApp { id: "Aseprite.Aseprite".to_string(), name: "Aseprite Pixel Art".to_string() },
-        WingetApp { id: "BlenderFoundation.Blender".to_string(), name: "Blender 3D Creation".to_string() },
-        WingetApp { id: "PeaZip.PeaZip".to_string(), name: "PeaZip Utility".to_string() },
-        // Social, AI & Gaming
-        WingetApp { id: "Discord.Discord".to_string(), name: "Discord Desktop".to_string() },
-        WingetApp { id: "Telegram.TelegramDesktop".to_string(), name: "Telegram Desktop".to_string() },
-        WingetApp { id: "OpenAI.ChatGPT".to_string(), name: "ChatGPT Desktop".to_string() },
-        WingetApp { id: "Anthropic.Claude".to_string(), name: "Claude Desktop".to_string() },
-        WingetApp { id: "Valve.Steam".to_string(), name: "Steam Gaming Client".to_string() },
-    ]
-}
-
-pub fn get_scoop_tools() -> Vec<&'static str> {
-    vec![
-        // Version Control & Shell Infrastructure
-        "git", "gh", "git-lfs", "restic", "chezmoi", "atuin", "direnv", "starship", "fastfetch",
-        // Runtimes & Environment Managers
-        "python", "nodejs-lts", "go", "zig", "deno", "fnm", "bun", "pnpm", "neovim", "tmux", "mise",
-        // Compilers & Build Tools
-        "cmake", "ninja", "nasm", "yasm", "sccache", "just", "mold", "gcc",
-        // Modern CLI Utility Alternatives
-        "ripgrep", "fd", "fzf", "bat", "eza", "topgrade", "tree", "fdupes", "jdupes", "parallel", "b3sum", "xxhash",
-        // Code Hygiene & Linters
-        "actionlint", "shellcheck", "shfmt",
-        // Media, Video & Audio Converters
-        "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract",
-        // Proxy, Network & Database
-        "aria2", "wget", "buku", "lz4", "zstd", "xz", "brotli", "sqlite", "postgresql",
-        "sing-box", "mihomo", "nextdns", "smartdns",
-        // Local AI & Machine Learning
-        "ollama", "whisper-cpp",
-    ]
-}
-
-pub fn get_vscode_extensions() -> Vec<&'static str> {
-    vec![
-        "anthropic.claude-code",
-        "anysphere.cursorpyright",
-        "anysphere.remote-containers",
-        "anysphere.remote-ssh",
-        "davidanson.vscode-markdownlint",
-        "donjayamanne.githistory",
-        "eamodio.gitlens",
-        "github.vscode-github-actions",
-        "golang.go",
-        "ms-azuretools.vscode-docker",
-        "ms-python.python",
-        "ms-python.debugpy",
-        "vscodevim.vim",
-    ]
-}
-
-pub fn get_cargo_packages() -> Vec<&'static str> {
-    vec![
-        // Token Killer & Repositories
-        "rtk", "bkmr", "yek",
-        // Cargo Developer Suites
-        "cargo-edit", "cargo-expand", "cargo-audit", "cargo-deny", "cargo-hack",
-        "cargo-license", "cargo-machete", "cargo-mutants", "cargo-semver-checks", "cargo-udeps",
-        "cargo-bloat", "cargo-about", "cargo-upgrades", "rust-script", "flamegraph",
-        // Storage & Disk Utilities
-        "dupe-krill", "fclones", "kondo", "krokiet",
-    ]
-}
-
-pub fn get_npm_globals() -> Vec<&'static str> {
-    vec![
-        "@anthropic-ai/claude-code", "@alibaba-group/open-code-review", "@diff4/cli",
-        "acp-ts", "context-mode", "lodash", "openclaw", "opencode-ai",
-        "pyright", "run-deepseek-cli", "typescript", "typescript-language-server",
-        "uipro-cli", "prettier", "markdownlint-cli2",
-    ]
-}
-
-pub fn get_pip_packages() -> Vec<&'static str> {
-    vec![
-        "flask", "flask-cors", "numpy", "scipy", "scikit-learn", "pillow",
-        "opencv-python", "torch", "lightgbm", "openvino", "tqdm", "joblib",
-        "sympy", "networkx", "PyWavelets", "certifi", "cryptography", "filelock", "fsspec",
-        "ruff", "pyupgrade",
-    ]
-}
-
-pub fn get_uv_tools() -> Vec<&'static str> {
-    vec!["kimi-cli", "ruff"]
 }
