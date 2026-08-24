@@ -35,6 +35,17 @@ jobs:
       - name: Verify every configured provider package
         run: cargo run --bin profile_audit
       - run: cargo build --release --bin ltsc_setup_gui
+      - name: Verify standalone Windows artifact
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("target/release/ltsc_setup_gui.exe")
+          $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if ($ascii -match "VCRUNTIME[0-9_]*\.dll") {
+            throw "Windows artifact still depends on a dynamic VC runtime"
+          }
+          if (-not $ascii.Contains("requireAdministrator")) {
+            throw "Windows artifact is missing its embedded UAC manifest"
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: ltsc_setup_gui-windows-x64

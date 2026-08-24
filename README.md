@@ -41,6 +41,8 @@ cargo run --bin macos_inventory -- src/assets/macos_inventory.json
 
 专项任务包括开发工具、网络、存储、Windows 功能、IDE、Agent、系统调优和回滚。
 
+Windows release 静态链接 VC Runtime，部署器本身不依赖一台全新 LTSC 尚未安装的 `VCRUNTIME140.dll`；CI 会在上传前检查该约束和内嵌 UAC 清单。
+
 ## 代码结构
 
 ```text

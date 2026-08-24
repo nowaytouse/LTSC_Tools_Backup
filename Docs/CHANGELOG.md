@@ -10,6 +10,7 @@
 - 新增可复用的受管卓越性能计划和仅修改 AC 参数的极限电源档。
 - 新增持久化回滚账本与“撤销上次调优”；休眠默认关闭选项为 false，无法读到原状态时拒绝变更。
 - 新增 Windows/macOS CI、每周全量 provider 在线审计和发布产物上传。
+- Windows release 静态链接 VC Runtime，并在 CI 中阻断缺失 UAC 清单或重新引入动态 `VCRUNTIME*.dll` 的产物。
 
 ## 2.0.0 - 2026-08-24
 
