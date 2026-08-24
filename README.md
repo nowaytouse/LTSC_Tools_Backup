@@ -1,6 +1,6 @@
 # 🚀 Windows LTSC Ultimate Workstation Setup (Rust Native GUI)
 
-> **macOS 100% 同等能力 & 深度环境一键同步移植工具**  
+> **将本机 macOS 开发环境映射到 Windows 可用等价工具的个人部署器**  
 > 一键解锁卓越性能、全量部署 100+ 开发者软件库、恢复 LTSC 原生应用、静默释出 55+ 真实 AI Agent Skills / Hooks、同步 VS Code/Cursor 插件与配置。
 
 ---
@@ -9,7 +9,7 @@
 
 - **双击直运行原生 GUI (`ltsc_setup_gui.exe`)**：无脚本依托、无命令行依赖。在 Windows 下直接双击打开原生 GUI 界面，勾选配置后一键自动化完成。
 - **55+ 真实 AI Agent Skills 内存嵌入 (`include_dir`)**：所有 Agent Skills、Plugins 插件及 `AGENTS.md` 规则均直接静态编译打包在 15MB `.exe` 二进制文件内部，运行即自动释放解压至 `%USERPROFILE%\.gemini\config`。
-- **macOS 100+ 软件矩阵对齐**：涵盖 VS Code、Cursor、Chrome、Brave、Docker Desktop、Podman Desktop、Krita、Bitwarden、Gpg4win、PeaZip、Sing-box、Mihomo、Ollama、Whisper-cpp、Ripgrep、Fd、Fzf、Bat、Eza、Starship、Fastfetch 等 100+ 桌面与 CLI 工具。
+- **本机工具快照对齐**：配置基于 2026-08-24 的 103 个 Homebrew formulae 与 15 个 cask；仅映射已验证的 Windows 等价工具，macOS 专属组件明确跳过。
 - **Git 账号与全量偏好**：自动配置 `user.name = "nowaytouse"`、`user.email`、500MB PostBuffer、全局 GitIgnore 及 LFS 流程。
 - **PowerShell 7 Profile 自动化**：一键写入 UTF-8 控制台编码、`starship` 主题、`zoxide` 路径跳转及 `g` / `ls` / `ll` / `cat` / `find` / `grep` / `top` 高效快捷别名。
 - **VS Code & Cursor 扩展与 Settings 同步**：自动安装 13 款主流开发插件并部署 `settings.json`。
@@ -21,10 +21,10 @@
 ## 🖥️ 快速使用指南 (Windows)
 
 1. 在 Windows 设备上打开本项目根目录。
-2. 双击运行 **[ltsc_setup_gui.exe](file:///Users/nyamiiko/Downloads/GitHub/LTSC_Tools_Backup/ltsc_setup_gui.exe)** (建议右键选择“以管理员身份运行”)。
+2. 双击运行 **`ltsc_setup_gui.exe`**（建议右键选择“以管理员身份运行”）。
 3. 在 GUI 界面勾选所需模块（默认全部勾选）。
 4. 点击 **▶️ 一键开始全套配置**，在右侧日志框实时查看进度。
-5. 配置完成后，点击 **💾 导出日志到桌面** 保存记录，建议重启系统使系统级优化生效。
+5. 仅在日志没有红色失败项时视为完成；随后导出日志并重启系统使系统级设置生效。
 
 ---
 
@@ -34,7 +34,7 @@
 LTSC_Tools_Backup/
 ├── ltsc_setup_gui.exe        # 预编译 Windows 15MB 原生单文件 GUI 程序
 ├── Cargo.toml                 # Rust 项目依赖与编译配置
-├── assets/                    # 编译期静态嵌入的资源 Payload
+├── src/assets/                # 编译期静态嵌入的资源 Payload
 │   ├── skills/                # 55+ 真实 AI Agent Skills 目录
 │   ├── plugins/               # Lean-ctx & Ponytail 插件包
 │   ├── AGENTS.md              # 全局 Agent 规则
@@ -46,7 +46,7 @@ LTSC_Tools_Backup/
 │   ├── config.rs              # 100+ 软件矩阵与 SetupConfig 状态结构
 │   └── utils.rs               # PowerShell/原生命令执行与日志格式化
 ├── Docs/                      # 软件清单与环境配置报告
-└── CHANGELOG.md               # 版本更新日志
+└── Docs/CHANGELOG.md          # 版本更新日志
 ```
 
 ---

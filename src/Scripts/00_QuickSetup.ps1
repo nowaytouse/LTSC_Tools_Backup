@@ -310,28 +310,6 @@ function Ensure-Scoop {
     }
 }
 
-function Ensure-Chocolatey {
-    if (Test-CommandAvailable "choco") {
-        Write-Log "Chocolatey is already installed." "OK"
-        return
-    }
-
-    try {
-        Write-Log "Installing Chocolatey..."
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        Refresh-PathEnvironment
-        if (Test-CommandAvailable "choco") {
-            Write-Log "Chocolatey successfully installed." "OK"
-        } else {
-            Write-Log "Chocolatey installation executed but choco is not in PATH." "WARN"
-        }
-    } catch {
-        Write-Log ("Chocolatey installation failed: {0}" -f $_.Exception.Message) "WARN"
-    }
-}
-
 function Ensure-UwpApps {
     $uwpApps = @(
         @{ Name = "Microsoft.WindowsCalculator"; Desc = "Calculator" },
@@ -633,7 +611,6 @@ function Write-ComponentAuditSummary {
         @{ Name = "Microsoft Store"; Check = { Get-AppxPackage -Name Microsoft.WindowsStore -ErrorAction SilentlyContinue } },
         @{ Name = "Winget"; Check = { Get-Command winget -ErrorAction SilentlyContinue } },
         @{ Name = "Scoop"; Check = { Get-Command scoop -ErrorAction SilentlyContinue } },
-        @{ Name = "Chocolatey"; Check = { Get-Command choco -ErrorAction SilentlyContinue } },
         @{ Name = "Photos App"; Check = { Get-AppxPackage -Name Microsoft.Windows.Photos -ErrorAction SilentlyContinue } },
         @{ Name = "Calculator"; Check = { Get-AppxPackage -Name Microsoft.WindowsCalculator -ErrorAction SilentlyContinue } },
         @{ Name = "Paint"; Check = { Get-AppxPackage -Name Microsoft.Paint -ErrorAction SilentlyContinue } },
@@ -683,8 +660,11 @@ $devWingetApps = @(
     @{ Id = "LocalSend.LocalSend"; Name = "LocalSend" },
     @{ Id = "GnuPG.Gpg4win"; Name = "Gpg4win" },
     @{ Id = "Microsoft.OpenJDK.21"; Name = "OpenJDK 21" },
+    @{ Id = "Microsoft.PowerShell"; Name = "PowerShell 7" },
+    @{ Id = "CondaForge.Miniforge3"; Name = "Miniforge 3" },
     @{ Id = "EFF.Certbot"; Name = "Certbot" },
     @{ Id = "Cryptomator.Cryptomator"; Name = "Cryptomator" },
+    @{ Id = "Docker.DockerDesktop"; Name = "Docker Desktop" },
     @{ Id = "RedHat.PodmanDesktop"; Name = "Podman Desktop" },
     @{ Id = "KDE.Krita"; Name = "Krita" },
     @{ Id = "Pureref.PureRef"; Name = "PureRef" },
@@ -698,7 +678,9 @@ $scoopTools = @(
     "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "restic", "7zip", "fdupes", "jdupes",
     "parallel", "tree", "sqlite", "nasm", "yasm", "topgrade", "buku", "ollama",
     "tesseract", "poppler", "lz4", "zstd", "xz", "brotli", "transmission-cli", "sing-box", "mihomo",
-    "just", "actionlint", "shellcheck", "shfmt", "chezmoi", "atuin", "direnv"
+    "just", "actionlint", "shellcheck", "shfmt", "chezmoi", "atuin", "direnv", "zoxide",
+    "apngasm", "czkawka", "dovi-tool", "gifsicle", "gifski", "git-filter-repo", "gpac", "helm", "jhead",
+    "lychee", "mediainfo", "meson", "pipx", "pngquant", "pyenv", "ruby", "taplo", "tealdeer", "volta"
 )
 
 $cargoPackages = @(

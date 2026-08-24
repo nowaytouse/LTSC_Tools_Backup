@@ -4,6 +4,17 @@ All notable changes to the `LTSC_Tools_Backup` project and the native Rust GUI e
 
 ---
 
+## [v1.1.0] - 2026-08-24 (Reliability & Host Parity)
+
+- Drains child stdout/stderr while commands run, so verbose installers no longer deadlock and report false timeouts.
+- Adds post-bootstrap Windows PATH discovery, package presence checks, one bounded retry, realistic timeouts, and a final failure count.
+- Bootstraps and verifies only the package managers actually used: WinGet and Scoop; removes unused Chocolatey.
+- Makes Basic, Optimized, and Extreme network modes apply only their documented changes and validate native exit codes.
+- Updates the embedded profile from this Mac's 103 Homebrew formulae and 15 casks with verified Windows equivalents.
+- Replaces `safe.directory=*`, preserves existing PowerShell profile content with a managed block, and refreshes the bundled Windows executable.
+
+---
+
 ## [v1.0.0] - 2026-07-24 (Native Rust GUI Ultimate Release)
 
 ### 🚀 Major Highlights

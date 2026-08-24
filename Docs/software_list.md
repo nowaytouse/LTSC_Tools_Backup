@@ -2,7 +2,7 @@
 
 ## Included By Default (Core Baseline)
 
-The main setup script (`Scripts\00_QuickSetup.ps1`) installs these baseline desktop applications via Winget:
+The GUI's embedded profile (`src\assets\setup_profile.json`) installs these baseline applications via Winget:
 
 - `7zip.7zip` (7-Zip Archiver)
 - `VideoLAN.VLC` (VLC Media Player)
@@ -13,23 +13,23 @@ The main setup script (`Scripts\00_QuickSetup.ps1`) installs these baseline desk
 
 ## Included With Developer Mode Enabled (Default)
 
-Without `-SkipDevTools`, the script provisions a comprehensive developer environment matching macOS workstation capabilities:
+Developer mode provisions Windows-supported equivalents from the 2026-08-24 host snapshot (103 Homebrew formulae and 15 casks):
 
 ### Desktop Applications (Winget)
 
 - **IDEs & Editors**: `Microsoft.VisualStudioCode`, `Anysphere.Cursor`
 - **Browsers**: `Brave.Brave`, `LibreWolf.LibreWolf`
-- **Developer & Security Tools**: `Bitwarden.CLI`, `Bitwarden.Bitwarden`, `LocalSend.LocalSend`, `GnuPG.Gpg4win`, `Microsoft.OpenJDK.21`, `EFF.Certbot`, `Cryptomator.Cryptomator`, `RedHat.PodmanDesktop`
+- **Developer & Security Tools**: `Bitwarden.CLI`, `Bitwarden.Bitwarden`, `LocalSend.LocalSend`, `GnuPG.Gpg4win`, `Microsoft.OpenJDK.21`, `Microsoft.PowerShell`, `CondaForge.Miniforge3`, `EFF.Certbot`, `Cryptomator.Cryptomator`, `Docker.DockerDesktop`, `RedHat.PodmanDesktop`
 - **Graphics & Utilities**: `KDE.Krita`, `Pureref.PureRef`, `PeaZip.PeaZip`, `BlenderFoundation.Blender`
 
 ### CLI Runtimes, Utilities & Tools (Scoop)
 
 - **Core Version Control & Cloud**: `git`, `gh`, `git-lfs`, `restic`, `chezmoi`, `atuin`, `direnv`
-- **Runtimes & Managers**: `python`, `nodejs-lts`, `go`, `zig`, `deno`, `fnm`, `bun`, `pnpm`
-- **Build Systems & Compilers**: `cmake`, `ninja`, `nasm`, `yasm`, `sccache`, `just`
-- **Search, Shell & Modern CLI Utility Alternatives**: `ripgrep`, `fd`, `fzf`, `bat`, `eza`, `starship`, `fastfetch`, `topgrade`, `tree`, `fdupes`, `jdupes`, `parallel`
+- **Runtimes & Managers**: `python`, `nodejs-lts`, `go`, `zig`, `deno`, `fnm`, `bun`, `pnpm`, `mise`, `pyenv`, `pipx`, `ruby`, `volta`
+- **Build Systems & Compilers**: `cmake`, `meson`, `ninja`, `nasm`, `yasm`, `sccache`, `just`, `mold`, `gcc`
+- **Search, Shell & Modern CLI Utility Alternatives**: `ripgrep`, `fd`, `fzf`, `bat`, `eza`, `starship`, `zoxide`, `fastfetch`, `topgrade`, `tree`, `fdupes`, `jdupes`, `parallel`, `tealdeer`
 - **Linters & Formatters**: `actionlint`, `shellcheck`, `shfmt`
-- **Media, Audio & Conversion**: `ffmpeg`, `imagemagick`, `exiftool`, `yt-dlp`, `gallery-dl`, `transmission-cli`, `poppler`, `tesseract`
+- **Media, Audio & Conversion**: `ffmpeg`, `imagemagick`, `exiftool`, `apngasm`, `gifsicle`, `gifski`, `gpac`, `mediainfo`, `pngquant`, `dovi-tool`, `yt-dlp`, `gallery-dl`, `transmission-cli`, `poppler`, `tesseract`
 - **Network, Compression & Storage**: `aria2`, `wget`, `buku`, `lz4`, `zstd`, `xz`, `brotli`, `sqlite`, `sing-box`, `mihomo`
 - **Local AI & ML**: `ollama`
 
@@ -55,10 +55,12 @@ Without `-SkipDevTools`, the script provisions a comprehensive developer environ
 ## Operational Parameters
 
 ```powershell
-.\Scripts\00_QuickSetup.ps1 -SkipDevTools
-.\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
-.\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
-.\Scripts\00_QuickSetup.ps1 -NetworkMode Basic|Optimized|Extreme
+.\src\Scripts\00_QuickSetup.ps1 -SkipDevTools
+.\src\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
+.\src\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
+.\src\Scripts\00_QuickSetup.ps1 -NetworkMode Basic|Optimized|Extreme
 ```
 
-Last Updated: 2026-07-24
+macOS-only packages are intentionally excluded instead of installing unrelated substitutes.
+
+Last Updated: 2026-08-24

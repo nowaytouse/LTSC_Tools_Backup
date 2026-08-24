@@ -1,6 +1,7 @@
 use crate::config::*;
-use crate::utils::{run_native_cmd, run_native_cmd_timeout, run_powershell_cmd, LogLevel, LogMessage};
+use crate::utils::{run_native_cmd, run_native_cmd_timeout, run_powershell_cmd, run_powershell_cmd_timeout, LogLevel, LogMessage};
 use include_dir::{include_dir, Dir, DirEntry};
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::mpsc::Sender;
 
@@ -10,15 +11,25 @@ pub struct SetupEngine {
     tx: Sender<LogMessage>,
     progress_tx: Sender<f32>,
     config: SetupConfig,
+    errors: Cell<usize>,
 }
 
 impl SetupEngine {
     pub fn new(tx: Sender<LogMessage>, progress_tx: Sender<f32>, config: SetupConfig) -> Self {
-        Self { tx, progress_tx, config }
+        Self { tx, progress_tx, config, errors: Cell::new(0) }
     }
 
     fn log(&self, level: LogLevel, msg: impl Into<String>) {
+        if level == LogLevel::Error {
+            self.errors.set(self.errors.get() + 1);
+        }
         let _ = self.tx.send(LogMessage::new(level, msg));
+    }
+
+    fn finish(&self, success: &str) {
+        let errors = self.errors.get();
+        let (level, message) = if errors == 0 { (LogLevel::End, success.to_string()) } else { (LogLevel::Error, format!("部署结束，但有 {errors} 项失败；请按红色日志修复后重试。")) };
+        let _ = self.tx.send(LogMessage::new(level, message));
     }
 
     fn progress(&self, val: f32) {
@@ -34,32 +45,32 @@ impl SetupEngine {
                 self.log(LogLevel::Start, "运行显式专项任务: 网络与代理接口硬化...");
                 self.step_network();
                 self.progress(1.0);
-                self.log(LogLevel::End, "网络与代理接口优化完成。");
+                self.finish("网络与代理接口优化完成。");
             }
             ExecutionTarget::AgentSkillsOnly => {
                 self.log(LogLevel::Start, "运行显式专项任务: AI Agent Skills & Hooks 嵌入式释出...");
                 self.step_agent_skills();
                 self.progress(1.0);
-                self.log(LogLevel::End, "AI Agent Skills & Hooks 释出完成。");
+                self.finish("AI Agent Skills & Hooks 释出完成。");
             }
             ExecutionTarget::DevToolsOnly => {
                 self.log(LogLevel::Start, "运行显式专项任务: 100+ 开发者软件库部署...");
                 self.step_package_managers();
                 self.step_dev_suite();
                 self.progress(1.0);
-                self.log(LogLevel::End, "100+ 开发者软件库部署完成。");
+                self.finish("开发者软件库部署完成。");
             }
             ExecutionTarget::VSCodeExtensionsOnly => {
                 self.log(LogLevel::Start, "运行显式专项任务: VS Code & Cursor 扩展及偏好设置同步...");
                 self.step_vscode_and_tools_config();
                 self.progress(1.0);
-                self.log(LogLevel::End, "VS Code & Cursor 扩展及配置同步完成。");
+                self.finish("VS Code & Cursor 扩展及配置同步完成。");
             }
             ExecutionTarget::SystemTweaksOnly => {
                 self.log(LogLevel::Start, "运行显式专项任务: Windows 性能与隐私深度优化...");
                 self.step_deep_win_tweaks();
                 self.progress(1.0);
-                self.log(LogLevel::End, "Windows 性能与隐私深度优化完成。");
+                self.finish("Windows 性能与隐私深度优化完成。");
             }
         }
     }
@@ -146,73 +157,117 @@ impl SetupEngine {
         self.step_audit();
         self.progress(1.0);
 
-        self.log(LogLevel::End, "Windows LTSC 显式配置完成！所有操作均可复现与追溯。建议重启系统生效。");
+        self.finish("Windows LTSC 配置完成；建议重启系统使系统级设置生效。");
     }
 
     fn step_network(&self) {
-        let net_cfg = &self.config.profile.network_config;
-        self.log(LogLevel::Info, format!("显式网络硬化配置: TLS1.2/1.3={}, CTCP={}, ECN={}, WinHTTP Proxy={}", net_cfg.enable_tls12_tls13, net_cfg.enable_ctcp, net_cfg.enable_ecn, net_cfg.import_winhttp_proxy));
-
-        let net_script = r##"
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-            ipconfig /flushdns | Out-Null
-            netsh int tcp set global autotuninglevel=normal | Out-Null
-            netsh int tcp set global congestionprovider=ctcp | Out-Null
-            netsh int tcp set global ecncapability=enabled | Out-Null
-            netsh winhttp import proxy source=ie | Out-Null
-        "##;
+        let (label, net_script) = match self.config.network_mode {
+            NetworkMode::Basic => (
+                "Basic: TLS 1.2 与 DNS 刷新",
+                r##"
+                    $ErrorActionPreference = "Stop"
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    ipconfig /flushdns | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "DNS flush failed: $LASTEXITCODE" }
+                "##,
+            ),
+            NetworkMode::Optimized => (
+                "Optimized: TLS 1.2、DNS 刷新与 TCP 自动调优",
+                r##"
+                    $ErrorActionPreference = "Stop"
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    ipconfig /flushdns | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "DNS flush failed: $LASTEXITCODE" }
+                    netsh int tcp set global autotuninglevel=normal | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "TCP autotuning failed: $LASTEXITCODE" }
+                "##,
+            ),
+            NetworkMode::Extreme => (
+                "Extreme: Optimized + CTCP、ECN 与 WinHTTP 代理同步",
+                r##"
+                    $ErrorActionPreference = "Stop"
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    ipconfig /flushdns | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "DNS flush failed: $LASTEXITCODE" }
+                    netsh int tcp set global autotuninglevel=normal | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "TCP autotuning failed: $LASTEXITCODE" }
+                    netsh int tcp set global congestionprovider=ctcp | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "CTCP configuration failed: $LASTEXITCODE" }
+                    netsh int tcp set global ecncapability=enabled | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "ECN configuration failed: $LASTEXITCODE" }
+                    netsh winhttp import proxy source=ie | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "WinHTTP proxy import failed: $LASTEXITCODE" }
+                "##,
+            ),
+        };
+        self.log(LogLevel::Info, format!("网络模式: {label}"));
 
         let (ok, out) = run_powershell_cmd(net_script);
         if ok {
-            self.log(LogLevel::Ok, "网络 TLS 1.2/1.3、TCP 窗口、CTCP 拥塞控制及 WinHTTP 代理同步成功");
+            self.log(LogLevel::Ok, format!("网络配置完成: {label}"));
         } else {
-            self.log(LogLevel::Warn, format!("网络配置提示: {}", out));
+            self.log(LogLevel::Error, format!("网络配置失败: {}", out));
         }
     }
 
     fn step_package_managers(&self) {
-        self.log(LogLevel::Info, "检查并显式部署包管理器环境 (Winget / Scoop / Chocolatey)...");
+        self.log(LogLevel::Info, "检查并部署实际使用的包管理器 (Winget / Scoop)...");
 
         let winget_script = r##"
+            $ErrorActionPreference = "Stop"
             if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-                $vclibs = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
-                $dest = Join-Path $env:TEMP "vclibs.appx"
-                Start-BitsTransfer -Source $vclibs -Destination $dest -ErrorAction SilentlyContinue
-                Add-AppxPackage -Path $dest -ErrorAction SilentlyContinue
+                try {
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    Install-PackageProvider -Name NuGet -Force | Out-Null
+                    Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope AllUsers | Out-Null
+                    Import-Module Microsoft.WinGet.Client
+                    Repair-WinGetPackageManager -AllUsers
+                } catch {
+                    $bundle = Join-Path $env:TEMP "winget.msixbundle"
+                    Invoke-WebRequest -Uri "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" -OutFile $bundle
+                    Add-AppxPackage -Path $bundle
+                    Remove-Item $bundle -Force -ErrorAction SilentlyContinue
+                }
             }
         "##;
-        let _ = run_powershell_cmd(winget_script);
-        self.log(LogLevel::Ok, "Winget 运行环境验证完成");
-
-        let scoop_cmd = r##"
-            if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
-                Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
-                Invoke-RestMethod -Uri "https://get.scoop.sh" | Invoke-Expression
-            }
-        "##;
-        let (s_ok, _) = run_powershell_cmd(scoop_cmd);
-        if s_ok {
-            for b in &["extras", "versions", "nirsoft", "sysinternals"] {
-                self.log(LogLevel::Info, format!("添加 Scoop 软件源 (Bucket): {}", b));
-                let _ = run_native_cmd("scoop", &["bucket", "add", b]);
-            }
-            self.log(LogLevel::Ok, "Scoop 包管理器部署就绪 (已显式添加 4 个官方/社区源)");
+        let (bootstrap_ok, bootstrap_out) = run_powershell_cmd_timeout(winget_script, 600);
+        let (winget_ok, winget_version) = run_native_cmd_timeout("winget", &["--version"], 30);
+        if bootstrap_ok && winget_ok {
+            self.log(LogLevel::Ok, format!("Winget 已就绪: {}", winget_version.trim()));
         } else {
-            self.log(LogLevel::Warn, "Scoop 状态验证完成");
+            self.log(LogLevel::Error, format!("Winget 启动失败: {}", if bootstrap_out.is_empty() { winget_version } else { bootstrap_out }));
         }
 
-        let choco_cmd = r##"
-            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-                Set-ExecutionPolicy Bypass -Scope Process -Force
-                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-                Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        let scoop_cmd = r##"
+            $ErrorActionPreference = "Stop"
+            $scoopCommand = Get-Command scoop -ErrorAction SilentlyContinue
+            if ($scoopCommand) {
+                $scoop = $scoopCommand.Source
+            } else {
+                Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+                $installer = Join-Path $env:TEMP "install-scoop.ps1"
+                Invoke-RestMethod -Uri "https://get.scoop.sh" -OutFile $installer
+                $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+                if ($isAdmin) { & $installer -RunAsAdmin } else { & $installer }
+                if ($LASTEXITCODE -ne 0) { throw "Scoop installer exited with $LASTEXITCODE" }
+                Remove-Item $installer -Force -ErrorAction SilentlyContinue
+                $scoop = Join-Path $env:USERPROFILE "scoop\shims\scoop.cmd"
+            }
+            if (-not (Test-Path $scoop)) { throw "Scoop shim was not created" }
+            $bucketList = (& $scoop bucket list | Out-String)
+            foreach ($bucket in @("extras", "versions")) {
+                if ($bucketList -notmatch "(?m)^\s*$bucket\s+") {
+                    & $scoop bucket add $bucket
+                    if ($LASTEXITCODE -ne 0) { throw "Failed to add Scoop bucket: $bucket" }
+                }
             }
         "##;
-        let (c_ok, _) = run_powershell_cmd(choco_cmd);
-        if c_ok {
-            self.log(LogLevel::Ok, "Chocolatey 包管理器部署/就绪");
+        let (bootstrap_ok, bootstrap_out) = run_powershell_cmd_timeout(scoop_cmd, 300);
+        let (scoop_ok, scoop_version) = run_native_cmd_timeout("scoop", &["--version"], 30);
+        if bootstrap_ok && scoop_ok {
+            self.log(LogLevel::Ok, format!("Scoop 已就绪: {}", scoop_version.lines().next().unwrap_or("unknown")));
         } else {
-            self.log(LogLevel::Warn, "Chocolatey 状态验证完成");
+            self.log(LogLevel::Error, format!("Scoop 启动失败: {}", if bootstrap_out.is_empty() { scoop_version } else { bootstrap_out }));
         }
     }
 
@@ -224,61 +279,74 @@ impl SetupEngine {
 
         // Cargo Config Mirror
         let cargo_dir = Path::new(&home_dir).join(".cargo");
-        if std::fs::create_dir_all(&cargo_dir).is_ok() {
-            let cargo_config = format!(r#"[source.crates-io]
+        let cargo_config = format!(
+            r#"[source.crates-io]
 replace-with = 'tuna'
 
 [source.tuna]
 registry = "{}"
-"#, mirrors.cargo_sparse_index);
-            let _ = std::fs::write(cargo_dir.join("config.toml"), cargo_config);
-            self.log(LogLevel::Ok, format!("Cargo 镜像已显式配置 -> {}", cargo_dir.join("config.toml").display()));
+"#,
+            mirrors.cargo_sparse_index
+        );
+        let cargo_file = cargo_dir.join("config.toml");
+        match std::fs::create_dir_all(&cargo_dir).and_then(|_| std::fs::write(&cargo_file, cargo_config)) {
+            Ok(_) => self.log(LogLevel::Ok, format!("Cargo 镜像已配置 -> {}", cargo_file.display())),
+            Err(error) => self.log(LogLevel::Error, format!("Cargo 镜像配置失败: {error}")),
         }
 
         // Pip Mirror Config
         let appdata = std::env::var("APPDATA").unwrap_or_else(|_| format!("{}/AppData/Roaming", home_dir));
         let pip_dir = Path::new(&appdata).join("pip");
-        if std::fs::create_dir_all(&pip_dir).is_ok() {
-            let pip_ini = format!(r#"[global]
+        let pip_ini = format!(
+            r#"[global]
 index-url = {}
 trusted-host = pypi.tuna.tsinghua.edu.cn
-"#, mirrors.pip_index_url);
-            let _ = std::fs::write(pip_dir.join("pip.ini"), pip_ini);
-            self.log(LogLevel::Ok, format!("Pip 镜像已显式配置 -> {}", pip_dir.join("pip.ini").display()));
+"#,
+            mirrors.pip_index_url
+        );
+        let pip_file = pip_dir.join("pip.ini");
+        match std::fs::create_dir_all(&pip_dir).and_then(|_| std::fs::write(&pip_file, pip_ini)) {
+            Ok(_) => self.log(LogLevel::Ok, format!("Pip 镜像已配置 -> {}", pip_file.display())),
+            Err(error) => self.log(LogLevel::Error, format!("Pip 镜像配置失败: {error}")),
         }
     }
 
     fn step_uwp_apps(&self) {
         self.log(LogLevel::Info, "显式检查并修复 LTSC 原生 UWP 应用 (计算器 / 照片 / 画图 / 终端)...");
         let uwp_script = r##"
+            $ErrorActionPreference = "Stop"
             $apps = @("Microsoft.WindowsCalculator", "Microsoft.Windows.Photos", "Microsoft.Paint", "Microsoft.ScreenSketch", "Microsoft.WindowsTerminal")
             foreach ($app in $apps) {
                 if (-not (Get-AppxPackage -Name $app -ErrorAction SilentlyContinue)) {
                     $manifest = Get-ChildItem "$env:ProgramFiles\WindowsApps" -Filter "AppxManifest.xml" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*$app*" } | Select-Object -First 1 -ExpandProperty FullName
-                    if ($manifest) { Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction SilentlyContinue }
+                    if ($manifest) { Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction Stop }
                 }
             }
+            $missing = @($apps | Where-Object { -not (Get-AppxPackage -Name $_ -ErrorAction SilentlyContinue) })
+            if ($missing.Count -gt 0) { throw ("仍缺少 UWP 应用: " + ($missing -join ", ")) }
         "##;
-        let (ok, _) = run_powershell_cmd(uwp_script);
+        let (ok, out) = run_powershell_cmd_timeout(uwp_script, 300);
         if ok {
             self.log(LogLevel::Ok, "LTSC 内置 UWP 软件恢复完成");
         } else {
-            self.log(LogLevel::Warn, "UWP 应用修复完成");
+            self.log(LogLevel::Error, format!("UWP 应用恢复失败: {}", last_line(&out)));
         }
     }
 
     fn step_docker_wsl(&self) {
         self.log(LogLevel::Info, "显式开启 Docker & WSL2 虚拟化内核组件 (VirtualMachinePlatform, WSL2)...");
         let docker_script = r##"
-            Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
-            Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
-            wsl --set-default-version 2 2>$null
+            $ErrorActionPreference = "Stop"
+            Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart -ErrorAction Stop | Out-Null
+            Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -All -NoRestart -ErrorAction Stop | Out-Null
+            wsl --set-default-version 2
+            if ($LASTEXITCODE -ne 0) { throw "wsl exited with $LASTEXITCODE" }
         "##;
-        let (ok, _) = run_powershell_cmd(docker_script);
+        let (ok, out) = run_powershell_cmd_timeout(docker_script, 300);
         if ok {
             self.log(LogLevel::Ok, "WSL2 平台与 VirtualMachinePlatform 开启成功");
         } else {
-            self.log(LogLevel::Warn, "WSL2 平台验证完成");
+            self.log(LogLevel::Error, format!("WSL2 平台启用失败: {}", last_line(&out)));
         }
     }
 
@@ -293,7 +361,7 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
                 self.log(LogLevel::Ok, format!("已成功显式释出 {} 个 Agent Skills 与规则文件到 {}", count, target_base.display()));
             }
             Err(e) => {
-                self.log(LogLevel::Warn, format!("Agent Skills 解压写入过程有警告: {}", e));
+                self.log(LogLevel::Error, format!("Agent Skills 解压失败: {}", e));
             }
         }
     }
@@ -332,39 +400,72 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
             Ok(_) => {
                 let content = git_cfg.global_gitignore_rules.join("\n") + "\n";
                 match std::fs::write(&git_ignore_file, &content) {
-                    Ok(_)  => self.log(LogLevel::Ok, format!("[FILE] 写入 {} ({} 条规则)", git_ignore_file.display(), git_cfg.global_gitignore_rules.len())),
+                    Ok(_) => self.log(LogLevel::Ok, format!("[FILE] 写入 {} ({} 条规则)", git_ignore_file.display(), git_cfg.global_gitignore_rules.len())),
                     Err(e) => self.log(LogLevel::Error, format!("[FILE] FAIL {} => {}", git_ignore_file.display(), e)),
                 }
             }
             Err(e) => self.log(LogLevel::Error, format!("[FILE] 无法创建目录 {} => {}", git_ignore_dir.display(), e)),
         }
 
-        self.git_config("user.name",         &git_cfg.user_name);
-        self.git_config("user.email",        &git_cfg.user_email);
-        self.git_config("http.postBuffer",   &git_cfg.post_buffer_bytes.to_string());
-        self.git_config("safe.directory",    &git_cfg.safe_directory);
-        self.git_config("core.longpaths",    if git_cfg.enable_long_paths { "true" } else { "false" });
-        self.git_config("core.autocrlf",     if git_cfg.enable_autocrlf  { "true" } else { "false" });
+        self.git_config("user.name", &git_cfg.user_name);
+        self.git_config("user.email", &git_cfg.user_email);
+        self.git_config("http.postBuffer", &git_cfg.post_buffer_bytes.to_string());
+        if !git_cfg.safe_directory.trim().is_empty() {
+            self.git_config("safe.directory", &git_cfg.safe_directory);
+        } else {
+            let _ = run_native_cmd("git", &["config", "--global", "--unset-all", "safe.directory", r"^\*$"]);
+            self.log(LogLevel::Ok, "[GIT] 已移除不安全的 safe.directory=* 通配配置");
+        }
+        self.git_config("core.longpaths", if git_cfg.enable_long_paths { "true" } else { "false" });
+        self.git_config("core.autocrlf", if git_cfg.enable_autocrlf { "true" } else { "false" });
         self.git_config("core.excludesfile", "~/.config/git/ignore");
         self.git_config("filter.lfs.required", "true");
 
         // PowerShell Profile
         let mut alias_block = String::new();
+        if ps_cfg.enable_utf8_encoding {
+            alias_block.push_str("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n");
+        }
+        if ps_cfg.init_starship {
+            alias_block.push_str("if (Get-Command starship -ErrorAction SilentlyContinue) { Invoke-Expression (&starship init powershell) }\n");
+        }
+        if ps_cfg.init_zoxide {
+            alias_block.push_str("if (Get-Command zoxide -ErrorAction SilentlyContinue) { Invoke-Expression (& { (zoxide init powershell | Out-String) }) }\n");
+        }
         for (k, v) in &ps_cfg.aliases {
             alias_block.push_str(&format!("Set-Alias -Name {} -Value {} -ErrorAction SilentlyContinue\n", k, v));
         }
-        let ps_script = format!(r##"
-            $d = Join-Path $env:USERPROFILE 'Documents\PowerShell'
-            if (-not (Test-Path $d)) {{ New-Item -Path $d -ItemType Directory -Force | Out-Null }}
-            $f = Join-Path $d 'Microsoft.PowerShell_profile.ps1'
-            if (-not (Test-Path $f)) {{
-                "# Profile`n[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`n{}" | Out-File -FilePath $f -Encoding utf8
-                Write-Output "created"
-            }} else {{ Write-Output "exists" }}
-        "##, alias_block);
+        let ps_script = format!(
+            r##"$ErrorActionPreference = "Stop"
+$d = Join-Path $env:USERPROFILE 'Documents\PowerShell'
+if (-not (Test-Path $d)) {{ New-Item -Path $d -ItemType Directory -Force | Out-Null }}
+$f = Join-Path $d 'Microsoft.PowerShell_profile.ps1'
+$start = '# >>> LTSC Tools managed >>>'
+$end = '# <<< LTSC Tools managed <<<'
+$managed = @'
+# >>> LTSC Tools managed >>>
+{}# <<< LTSC Tools managed <<<
+'@
+$content = if (Test-Path $f) {{ Get-Content $f -Raw }} else {{ '' }}
+$startIndex = $content.IndexOf($start)
+$endIndex = $content.IndexOf($end)
+if ($startIndex -ge 0 -and $endIndex -gt $startIndex) {{
+    $endIndex += $end.Length
+    $content = $content.Substring(0, $startIndex).TrimEnd() + "`r`n`r`n" + $managed + $content.Substring($endIndex)
+}} else {{
+    $content = $content.TrimEnd() + "`r`n`r`n" + $managed
+}}
+Set-Content -Path $f -Value $content.TrimStart() -Encoding utf8
+Write-Output "updated:$f"
+"##,
+            alias_block
+        );
         let (ok, out) = run_powershell_cmd(&ps_script);
-        if ok { self.log(LogLevel::Ok, format!("[FILE] PowerShell Profile: {}", out.trim())); }
-        else   { self.log(LogLevel::Error, format!("[FILE] PowerShell Profile FAIL: {}", out.trim())); }
+        if ok {
+            self.log(LogLevel::Ok, format!("[FILE] PowerShell Profile: {}", out.trim()));
+        } else {
+            self.log(LogLevel::Error, format!("[FILE] PowerShell Profile FAIL: {}", out.trim()));
+        }
     }
 
     fn git_config(&self, key: &str, value: &str) {
@@ -386,20 +487,17 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
         let npmrc_path = Path::new(&home_dir).join(".npmrc");
         let npmrc_content = format!("registry={}\nallow-scripts=@alibaba-group/open-code-review,context-mode,opencode-ai,better-sqlite3\n", mirrors.npm_registry);
         match std::fs::write(&npmrc_path, &npmrc_content) {
-            Ok(_)  => self.log(LogLevel::Ok, format!("[FILE] {} registry={}", npmrc_path.display(), mirrors.npm_registry)),
+            Ok(_) => self.log(LogLevel::Ok, format!("[FILE] {} registry={}", npmrc_path.display(), mirrors.npm_registry)),
             Err(e) => self.log(LogLevel::Error, format!("[FILE] FAIL {} => {}", npmrc_path.display(), e)),
         }
 
         let appdata = std::env::var("APPDATA").unwrap_or_else(|_| format!("{}/AppData/Roaming", home_dir));
         let settings_content = serde_json::to_string_pretty(&vscode_cfg.user_settings).unwrap_or_default();
 
-        for (label, dir) in &[
-            ("Code",   Path::new(&appdata).join("Code").join("User")),
-            ("Cursor", Path::new(&appdata).join("Cursor").join("User")),
-        ] {
+        for (label, dir) in &[("Code", Path::new(&appdata).join("Code").join("User")), ("Cursor", Path::new(&appdata).join("Cursor").join("User"))] {
             let target = dir.join("settings.json");
             match std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&target, &settings_content)) {
-                Ok(_)  => self.log(LogLevel::Ok, format!("[FILE] {} settings.json -> {}", label, target.display())),
+                Ok(_) => self.log(LogLevel::Ok, format!("[FILE] {} settings.json -> {}", label, target.display())),
                 Err(e) => self.log(LogLevel::Error, format!("[FILE] FAIL {} settings.json => {}", label, e)),
             }
         }
@@ -412,7 +510,7 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
             if ok1 || ok2 {
                 self.log(LogLevel::Ok, format!("IDE 扩展: {} [安装完成]", ext));
             } else {
-                self.log(LogLevel::Warn, format!("IDE 扩展: {} [已就绪/跳过]", ext));
+                self.log(LogLevel::Error, format!("IDE 扩展: {} [安装失败]", ext));
             }
             self.progress(0.58 + (i as f32 / total_exts as f32) * 0.07);
         }
@@ -490,7 +588,7 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
             if ok {
                 self.log(LogLevel::Ok, format!("本地 AI 模型 {} 已就绪", m));
             } else {
-                self.log(LogLevel::Warn, format!("Ollama 模型 {} 检查完成", m));
+                self.log(LogLevel::Error, format!("Ollama 模型 {} 拉取失败", m));
             }
         }
     }
@@ -501,11 +599,12 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
 
         // 1. Ultimate Performance power plan
         if t.activate_ultimate_performance {
-            let (ok, out) = run_powershell_cmd(
-                "powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null; $p = powercfg -l | Select-String 'Ultimate|卓越' | ForEach-Object { ($_ -split '\\s+')[3] }; if ($p) { powercfg -s $p; Write-Output \"activated:$p\" } else { Write-Output 'not_found' }"
-            );
-            if ok { self.log(LogLevel::Ok, format!("[REG] 卓越性能电源方案: {}", out.trim())); }
-            else   { self.log(LogLevel::Warn, format!("[REG] 卓越性能电源方案 WARN: {}", out.trim())); }
+            let (ok, out) = run_powershell_cmd("powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null; $p = powercfg -l | Select-String 'Ultimate|卓越' | ForEach-Object { ($_ -split '\\s+')[3] }; if ($p) { powercfg -s $p; Write-Output \"activated:$p\" } else { Write-Output 'not_found' }");
+            if ok {
+                self.log(LogLevel::Ok, format!("[REG] 卓越性能电源方案: {}", out.trim()));
+            } else {
+                self.log(LogLevel::Warn, format!("[REG] 卓越性能电源方案 WARN: {}", out.trim()));
+            }
         }
 
         // 2. Disable Telemetry
@@ -552,13 +651,10 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
     }
 
     fn set_reg_dword(&self, hive: &str, path: &str, name: &str, value: u32) {
-        let cmd = format!(
-            "New-Item -Path '{hive}:{path}' -Force -ErrorAction SilentlyContinue | Out-Null; Set-ItemProperty -Path '{hive}:{path}' -Name '{name}' -Value {value} -Type DWord -Force",
-            hive=hive, path=path, name=name, value=value
-        );
+        let cmd = format!("New-Item -Path '{hive}:{path}' -Force -ErrorAction SilentlyContinue | Out-Null; Set-ItemProperty -Path '{hive}:{path}' -Name '{name}' -Value {value} -Type DWord -Force", hive = hive, path = path, name = name, value = value);
         let (ok, out) = run_powershell_cmd(&cmd);
         if ok {
-            self.log(LogLevel::Ok, format!("[REG] {hive}:{path}\\{name} = {value}", hive=hive, path=path, name=name, value=value));
+            self.log(LogLevel::Ok, format!("[REG] {hive}:{path}\\{name} = {value}", hive = hive, path = path, name = name, value = value));
         } else {
             self.log(LogLevel::Error, format!("[REG] FAIL {hive}:{path}\\{name} = {value} => {}", out.trim()));
         }
@@ -566,76 +662,151 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
 
     fn step_audit(&self) {
         self.log(LogLevel::Info, "显式进行最终组件与命令行 CLI 审计...");
-        let audit_script = r##"
-            $tools = @("winget", "scoop", "git", "python", "node", "cargo", "uv", "rtk", "docker", "wsl", "pwsh")
+        let mut tools = vec!["winget", "scoop"];
+        if self.config.include_dev_tools {
+            tools.extend(["git", "python", "node", "cargo", "uv", "rtk", "pwsh"]);
+        }
+        if self.config.include_docker_wsl {
+            tools.push("wsl");
+        }
+        let audit_script = format!(
+            r##"
+            $ErrorActionPreference = "Stop"
+            $tools = @({})
             $found = @()
-            foreach ($t in $tools) {
-                if (Get-Command $t -ErrorAction SilentlyContinue) { $found += $t }
-            }
+            $missing = @()
+            foreach ($t in $tools) {{
+                if (Get-Command $t -ErrorAction SilentlyContinue) {{ $found += $t }} else {{ $missing += $t }}
+            }}
             Write-Output ("全套就绪指令: " + ($found -join ", "))
-        "##;
-        let (ok, out) = run_powershell_cmd(audit_script);
+            if ($missing.Count -gt 0) {{ throw ("缺失指令: " + ($missing -join ", ")) }}
+        "##,
+            tools.iter().map(|tool| format!("\"{tool}\"")).collect::<Vec<_>>().join(", ")
+        );
+        let (ok, out) = run_powershell_cmd(&audit_script);
         if ok && !out.is_empty() {
             self.log(LogLevel::Ok, out);
         } else {
-            self.log(LogLevel::Ok, "核心组件审计完成");
+            self.log(LogLevel::Error, format!("最终组件审计失败: {}", out.trim()));
         }
     }
 
     fn install_winget_app(&self, id: &str, name: &str) {
-        let args = ["install", "--id", id, "-e", "--silent", "--disable-interactivity",
-                    "--accept-package-agreements", "--accept-source-agreements", "--force"];
+        let (listed, output) = run_native_cmd_timeout("winget", &["list", "--id", id, "-e", "--accept-source-agreements", "--disable-interactivity"], 90);
+        if listed && output.to_ascii_lowercase().contains(&id.to_ascii_lowercase()) {
+            self.log(LogLevel::Ok, format!("[Winget] {} -> 已安装", name));
+            return;
+        }
+
+        let args = ["install", "--id", id, "-e", "--silent", "--disable-interactivity", "--accept-package-agreements", "--accept-source-agreements"];
         self.log(LogLevel::Info, format!("[CMD] winget {}", args.join(" ")));
-        let (ok, out) = run_native_cmd_timeout("winget", &args, 45);
+        let (ok, out) = self.run_package_command("Winget", "winget", &args, 900);
         if ok {
             self.log(LogLevel::Ok, format!("[Winget] {} -> OK", name));
         } else {
-            self.log(LogLevel::Warn, format!("[Winget] {} -> SKIP/EXIST ({})", name, out.trim().lines().last().unwrap_or("")));
+            self.log(LogLevel::Error, format!("[Winget] {} -> 失败 ({})", name, last_line(&out)));
         }
     }
 
     fn install_scoop_tool(&self, name: &str) {
-        let (ok, _) = run_native_cmd_timeout("scoop", &["install", name], 30);
+        let (listed, output) = run_native_cmd_timeout("scoop", &["list", name], 60);
+        if listed && package_is_listed(&output, name) {
+            self.log(LogLevel::Ok, format!("Scoop 工具: {} [已安装]", name));
+            return;
+        }
+        let (ok, out) = self.run_package_command("Scoop", "scoop", &["install", name], 600);
         if ok {
             self.log(LogLevel::Ok, format!("Scoop 工具: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Scoop 工具: {} [跳过/已存在/超时]", name));
+            self.log(LogLevel::Error, format!("Scoop 工具: {} [失败: {}]", name, last_line(&out)));
         }
     }
 
     fn install_cargo_package(&self, name: &str) {
-        let (ok, _) = run_native_cmd_timeout("cargo", &["install", name], 60);
+        let (listed, output) = run_native_cmd_timeout("cargo", &["install", "--list"], 60);
+        if listed && package_is_listed(&output, name) {
+            self.log(LogLevel::Ok, format!("Cargo 包: {} [已安装]", name));
+            return;
+        }
+        let (ok, out) = self.run_package_command("Cargo", "cargo", &["install", name], 1_800);
         if ok {
             self.log(LogLevel::Ok, format!("Cargo 包: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Cargo 包: {} [跳过/已存在/超时]", name));
+            self.log(LogLevel::Error, format!("Cargo 包: {} [失败: {}]", name, last_line(&out)));
         }
     }
 
     fn install_npm_global(&self, name: &str) {
-        let (ok, _) = run_native_cmd_timeout("npm", &["install", "-g", name, "--loglevel=error"], 30);
+        if run_native_cmd_timeout("npm", &["list", "-g", name, "--depth=0"], 60).0 {
+            self.log(LogLevel::Ok, format!("NPM 包: {} [已安装]", name));
+            return;
+        }
+        let (ok, out) = self.run_package_command("NPM", "npm", &["install", "-g", name, "--loglevel=error"], 600);
         if ok {
             self.log(LogLevel::Ok, format!("NPM 包: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("NPM 包: {} [跳过/已存在/超时]", name));
+            self.log(LogLevel::Error, format!("NPM 包: {} [失败: {}]", name, last_line(&out)));
         }
     }
 
     fn install_pip_package(&self, name: &str) {
-        let (ok, _) = run_native_cmd_timeout("pip", &["install", name, "--quiet"], 20);
+        if run_native_cmd_timeout("python", &["-m", "pip", "show", name], 60).0 {
+            self.log(LogLevel::Ok, format!("Pip 包: {} [已安装]", name));
+            return;
+        }
+        let (ok, out) = self.run_package_command("Pip", "python", &["-m", "pip", "install", name, "--quiet"], 900);
         if ok {
             self.log(LogLevel::Ok, format!("Pip 包: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("Pip 包: {} [跳过/已存在/超时]", name));
+            self.log(LogLevel::Error, format!("Pip 包: {} [失败: {}]", name, last_line(&out)));
         }
     }
 
     fn install_uv_tool(&self, name: &str) {
-        let (ok, _) = run_native_cmd_timeout("uv", &["tool", "install", name], 20);
+        let (listed, output) = run_native_cmd_timeout("uv", &["tool", "list"], 60);
+        if listed && package_is_listed(&output, name) {
+            self.log(LogLevel::Ok, format!("UV 工具: {} [已安装]", name));
+            return;
+        }
+        let (ok, out) = self.run_package_command("UV", "uv", &["tool", "install", name], 600);
         if ok {
             self.log(LogLevel::Ok, format!("UV 工具: {} [成功/就绪]", name));
         } else {
-            self.log(LogLevel::Warn, format!("UV 工具: {} [跳过/已存在/超时]", name));
+            self.log(LogLevel::Error, format!("UV 工具: {} [失败: {}]", name, last_line(&out)));
         }
+    }
+
+    fn run_package_command(&self, label: &str, program: &str, args: &[&str], timeout: u64) -> (bool, String) {
+        let first = run_native_cmd_timeout(program, args, timeout);
+        if first.0 {
+            return first;
+        }
+        self.log(LogLevel::Warn, format!("{label} 首次执行失败，自动重试一次: {}", last_line(&first.1)));
+        run_native_cmd_timeout(program, args, timeout)
+    }
+}
+
+fn package_is_listed(output: &str, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    output.lines().any(|line| {
+        let line = line.trim_start().to_ascii_lowercase();
+        line.strip_prefix(&name).and_then(|rest| rest.chars().next()).is_some_and(char::is_whitespace)
+    })
+}
+
+fn last_line(output: &str) -> &str {
+    output.trim().lines().last().unwrap_or("无诊断输出")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::package_is_listed;
+
+    #[test]
+    fn package_list_match_is_exact() {
+        let output = "git-filter-repo 2.47\ngit 2.53\nkimi-cli v1.49";
+        assert!(package_is_listed(output, "git"));
+        assert!(package_is_listed(output, "kimi-cli"));
+        assert!(!package_is_listed(output, "kimi"));
     }
 }

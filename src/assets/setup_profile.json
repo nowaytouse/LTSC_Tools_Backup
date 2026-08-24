@@ -1,15 +1,21 @@
 {
-  "profile_version": "1.0.0",
+  "profile_version": "1.1.0",
   "metadata": {
     "name": "macOS Host Environment Parity Profile for Windows LTSC",
     "author": "nowaytouse",
-    "description": "Explicit workstation setup specification defining all packages, git identity, IDE extensions, agent skills, and system registry tweaks."
+    "description": "Personal Windows LTSC profile synchronized from this Mac where a supported Windows equivalent exists.",
+    "source_host_snapshot": {
+      "captured_at": "2026-08-24",
+      "homebrew_formulae": 103,
+      "homebrew_casks": 15,
+      "policy": "Map verified Windows equivalents; skip macOS-only packages."
+    }
   },
   "git_config": {
     "user_name": "nowaytouse",
     "user_email": "104445933+nowaytouse@users.noreply.github.com",
     "post_buffer_bytes": 524288000,
-    "safe_directory": "*",
+    "safe_directory": "",
     "enable_long_paths": true,
     "enable_autocrlf": true,
     "global_gitignore_rules": [
@@ -28,10 +34,10 @@
     "aliases": {
       "g": "git",
       "ls": "eza",
-      "ll": "eza -lah",
+      "ll": "eza",
       "cat": "bat",
       "find": "fd",
-      "grep": "ripgrep",
+      "grep": "rg",
       "top": "fastfetch"
     }
   },
@@ -95,6 +101,8 @@
       { "id": "LocalSend.LocalSend", "name": "LocalSend File Transfer" },
       { "id": "GnuPG.Gpg4win", "name": "Gpg4win Security Suite" },
       { "id": "Microsoft.OpenJDK.21", "name": "Microsoft OpenJDK 21" },
+      { "id": "Microsoft.PowerShell", "name": "PowerShell 7" },
+      { "id": "CondaForge.Miniforge3", "name": "Miniforge 3" },
       { "id": "EFF.Certbot", "name": "Certbot SSL Tool" },
       { "id": "Cryptomator.Cryptomator", "name": "Cryptomator Vault" },
       { "id": "Docker.DockerDesktop", "name": "Docker Desktop" },
@@ -112,11 +120,13 @@
     ],
     "scoop_tools": [
       "git", "gh", "git-lfs", "restic", "chezmoi", "atuin", "direnv", "starship", "fastfetch",
-      "python", "nodejs-lts", "go", "zig", "deno", "fnm", "bun", "pnpm", "neovim", "tmux", "mise",
+      "python", "nodejs-lts", "go", "zig", "deno", "fnm", "bun", "pnpm", "neovim", "tmux", "mise", "zoxide",
       "cmake", "ninja", "nasm", "yasm", "sccache", "just", "mold", "gcc",
       "ripgrep", "fd", "fzf", "bat", "eza", "topgrade", "tree", "fdupes", "jdupes", "parallel", "b3sum", "xxhash",
       "actionlint", "shellcheck", "shfmt",
       "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract",
+      "apngasm", "czkawka", "dovi-tool", "gifsicle", "gifski", "git-filter-repo", "gpac", "helm", "jhead",
+      "lychee", "mediainfo", "meson", "pandoc", "pipx", "pngquant", "pyenv", "ruby", "taplo", "tealdeer", "volta",
       "aria2", "wget", "buku", "lz4", "zstd", "xz", "brotli", "sqlite", "postgresql",
       "sing-box", "mihomo", "nextdns", "smartdns",
       "ollama", "whisper-cpp"
