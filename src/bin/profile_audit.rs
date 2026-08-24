@@ -140,30 +140,43 @@ fn run_http_checks(checks: Vec<HttpCheck>, workers: usize) -> Vec<String> {
             let Some(check) = queue.lock().expect("audit queue poisoned").pop_front() else {
                 break;
             };
+            let mut diagnostics = Vec::new();
             let found = check.urls.iter().any(|url| {
-                run_native_cmd_timeout(
+                let result = run_native_cmd_timeout(
                     "curl.exe",
                     &[
                         "--fail",
                         "--silent",
                         "--show-error",
                         "--location",
+                        "--retry",
+                        "2",
+                        "--retry-all-errors",
+                        "--retry-delay",
+                        "1",
+                        "--user-agent",
+                        "LTSCWorkspace/2.1 (+https://github.com/nowaytouse/LTSC_Tools_Backup)",
                         "--max-time",
                         "20",
                         "--output",
                         "NUL",
                         url,
                     ],
-                    30,
+                    45,
                     &CancellationToken::default(),
-                )
-                .succeeded()
+                );
+                if result.succeeded() {
+                    true
+                } else {
+                    diagnostics.push(format!("{url}: {}", result.diagnostic()));
+                    false
+                }
             });
             if !found {
                 failures
                     .lock()
                     .expect("audit failures poisoned")
-                    .push(format!("{}: provider endpoint not found", check.label));
+                    .push(format!("{}: {}", check.label, diagnostics.join(" | ")));
             }
         }));
     }
