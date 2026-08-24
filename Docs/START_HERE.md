@@ -1,26 +1,36 @@
-# 🚀 Windows LTSC 双击快速配置指南
+# 开始使用
 
-欢迎使用 **Windows LTSC 终极一键配置环境工具**！
+## Windows 第一次运行
 
----
+1. 获取最新的 `ltsc_setup_gui.exe`；程序只支持 Windows。
+2. 双击后确认 UAC。发布版已内置管理员权限清单，不需要手动右键寻找入口。
+3. 首次选择“完整部署”；也可以先分别运行“Windows 功能”和“开发工具”。
+4. 检查中间的选项和风险说明，然后开始。
+5. 右侧最终状态是唯一完成依据，进度 100% 本身不代表没有失败项。
 
-## ⚡ 3 秒极速开始
+## 任务
 
-在 Windows 电脑上：
+- 开发工具：WinGet、Scoop、Cargo、NPM、Pip 与 UV。
+- 网络优化：保存原 TCP 配置后应用 Basic / Optimized / Extreme 档。
+- 存储优化：启用 TRIM，并用 `/O` 按介质类型优化固定卷。
+- Windows 功能：WSL2、.NET 3.5、Sandbox；完整 Hyper-V 默认关闭。
+- IDE / Agent：保守合并配置和释放明确的内置资源。
+- 系统优化：回滚账本、卓越性能、AC 极限参数、隐私和 Explorer 设置。
+- 撤销上次调优：逆序恢复最近的非空账本。
 
-1. **直接双击运行 [ltsc_setup_gui.exe](file:///Users/nyamiiko/Downloads/GitHub/LTSC_Tools_Backup/ltsc_setup_gui.exe)**（强烈建议右键选择 **以管理员身份运行**）。
-2. 在弹出的 GUI 窗口中，确认配置项无误后，点击 **▶️ 一键开始全套配置**。
-3. 观察右侧实时日志框，等待进度条达到 100%。
-4. 配置完成后可点击 **💾 导出日志到桌面** 留存记录，重启系统即可开启极致性能与 100% 同等开发体验！
+## 状态
 
----
+- 已完成：没有失败项。
+- 完成，但有失败项：线程已退出，可按红色日志修复后重试。
+- 已取消：当前子进程树已经停止。
+- 异常终止：后台线程 panic 或事件通道断开；GUI 已退出运行态。
 
-## 📦 本次配置包含的全量能力
+## 从 Mac 刷新工具
 
-- **100+ 开发软件与工具**（VS Code, Cursor, Git, Python, Node, Rust, Docker, Podman, Ripgrep, Starship 等）
-- **55+ 真实 AI Agent Skills & Hooks**（自动解压安装至 `%USERPROFILE%\.gemini\config`）
-- **13 款 VS Code / Cursor 插件与偏好配置**
-- **Git 账号 `nowaytouse` 与 500MB PostBuffer**
-- **PowerShell 7 Profile 自动化与快捷别名**
-- **Cargo / Pip / NPM 国内高速加速镜像**
-- **Windows LTSC 卓越性能模式激活与隐私/搜索/资源管理器深度优化**
+在源 Mac 运行：
+
+```text
+cargo run --bin macos_inventory -- src/assets/macos_inventory.json
+```
+
+提交并推送清单后，让 Windows 拉取最新提交并使用新构建。程序会在部署前拒绝任何没有映射规则的新工具，防止静默漏同步。

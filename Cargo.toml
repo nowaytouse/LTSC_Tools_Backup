@@ -1,13 +1,11 @@
 [package]
 name = "ltsc_setup_gui"
-version = "0.1.0"
+version = "2.1.0"
 edition = "2021"
 authors = ["Antigravity AI"]
-description = "One-Click Windows LTSC Setup & Environment Customizer GUI in Rust"
+description = "Cancellable Rust-native Windows LTSC workstation deployer"
 
 [dependencies]
-eframe = "0.29.1"
-egui = "0.29.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = "0.4"
@@ -15,4 +13,8 @@ anyhow = "1.0"
 include_dir = "0.7"
 
 [target.'cfg(windows)'.dependencies]
+eframe = { version = "0.36.1", default-features = false, features = ["accesskit", "default_fonts", "wgpu"] }
 winreg = "0.52"
+
+[build-dependencies]
+winresource = "0.1.31"

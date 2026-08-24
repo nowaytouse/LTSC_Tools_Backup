@@ -1,46 +1,93 @@
 use crate::config::{ExecutionTarget, NetworkMode, SetupConfig, SetupProfile};
-use crate::installer::SetupEngine;
-use crate::utils::{is_admin, LogLevel, LogMessage};
+use crate::installer::{run_setup_worker, SetupEvent, SetupOutcome, SetupSummary};
+use crate::utils::{is_admin, CancellationToken, LogLevel, LogMessage};
 use eframe::egui;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::thread;
+
+const BG: egui::Color32 = egui::Color32::from_rgb(12, 17, 25);
+const PANEL: egui::Color32 = egui::Color32::from_rgb(17, 24, 35);
+const CARD: egui::Color32 = egui::Color32::from_rgb(24, 33, 47);
+const CARD_HOVER: egui::Color32 = egui::Color32::from_rgb(31, 43, 60);
+const BORDER: egui::Color32 = egui::Color32::from_rgb(48, 62, 82);
+const TEXT: egui::Color32 = egui::Color32::from_rgb(232, 237, 245);
+const MUTED: egui::Color32 = egui::Color32::from_rgb(143, 156, 177);
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(91, 140, 255);
+const SUCCESS: egui::Color32 = egui::Color32::from_rgb(72, 201, 146);
+const WARNING: egui::Color32 = egui::Color32::from_rgb(245, 183, 75);
+const DANGER: egui::Color32 = egui::Color32::from_rgb(244, 104, 116);
+
+enum RunState {
+    Idle,
+    Running,
+    Cancelling,
+    Finished(SetupSummary),
+}
+
+impl RunState {
+    fn active(&self) -> bool {
+        matches!(self, Self::Running | Self::Cancelling)
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Idle => "准备就绪",
+            Self::Running => "正在部署",
+            Self::Cancelling => "正在取消",
+            Self::Finished(summary) => summary.outcome.label(),
+        }
+    }
+
+    fn color(&self) -> egui::Color32 {
+        match self {
+            Self::Idle => MUTED,
+            Self::Running => ACCENT,
+            Self::Cancelling => WARNING,
+            Self::Finished(summary) => match summary.outcome {
+                SetupOutcome::Succeeded => SUCCESS,
+                SetupOutcome::CompletedWithErrors | SetupOutcome::Crashed => DANGER,
+                SetupOutcome::Cancelled => WARNING,
+            },
+        }
+    }
+}
 
 pub struct SetupApp {
     config: SetupConfig,
-    is_running: bool,
+    selected_target: ExecutionTarget,
+    run_state: RunState,
     progress: f32,
     logs: Vec<LogMessage>,
-    log_rx: Option<Receiver<LogMessage>>,
-    progress_rx: Option<Receiver<f32>>,
+    event_rx: Option<Receiver<SetupEvent>>,
+    cancellation: Option<CancellationToken>,
+    worker: Option<thread::JoinHandle<()>>,
     admin_status: bool,
     json_editor_text: String,
     show_json_editor: bool,
     json_editor_error: Option<String>,
+    auto_scroll: bool,
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-
     static EMBEDDED_CJK_FONT: &[u8] = include_bytes!("assets/cjk_font.ttf");
 
     fonts.font_data.insert(
         "embedded_cjk_font".to_owned(),
-        egui::FontData::from_static(EMBEDDED_CJK_FONT),
+        egui::FontData::from_static(EMBEDDED_CJK_FONT).into(),
     );
-
     fonts
         .families
         .entry(egui::FontFamily::Proportional)
         .or_default()
         .insert(0, "embedded_cjk_font".to_owned());
-
     fonts
         .families
         .entry(egui::FontFamily::Monospace)
         .or_default()
         .push("embedded_cjk_font".to_owned());
 
-    #[cfg(target_os = "windows")]
     let font_paths = [
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\msyh.ttf",
@@ -48,53 +95,76 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         r"C:\Windows\Fonts\simsun.ttc",
     ];
 
-    #[cfg(not(target_os = "windows"))]
-    let font_paths = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-    ];
-
-    for (idx, path) in font_paths.iter().enumerate() {
-        if let Ok(font_bytes) = std::fs::read(path) {
-            let name = format!("sys_font_{}", idx);
-            fonts.font_data.insert(
-                name.clone(),
-                egui::FontData::from_owned(font_bytes),
-            );
+    for (index, path) in font_paths.iter().enumerate() {
+        if let Ok(bytes) = std::fs::read(path) {
+            let name = format!("system_cjk_{index}");
+            fonts
+                .font_data
+                .insert(name.clone(), egui::FontData::from_owned(bytes).into());
             fonts
                 .families
                 .entry(egui::FontFamily::Proportional)
                 .or_default()
-                .push(name.clone());
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
                 .push(name);
         }
     }
-
     ctx.set_fonts(fonts);
+}
+
+fn setup_style(ctx: &egui::Context) {
+    ctx.set_theme(egui::Theme::Dark);
+    let mut style = (*ctx.global_style()).clone();
+    style.visuals = egui::Visuals::dark();
+    style.visuals.panel_fill = BG;
+    style.visuals.window_fill = PANEL;
+    style.visuals.extreme_bg_color = BG;
+    style.visuals.faint_bg_color = CARD;
+    style.visuals.selection.bg_fill = ACCENT;
+    style.visuals.widgets.inactive.bg_fill = CARD;
+    style.visuals.widgets.inactive.weak_bg_fill = CARD;
+    style.visuals.widgets.hovered.bg_fill = CARD_HOVER;
+    style.visuals.widgets.active.bg_fill = ACCENT;
+    style.spacing.item_spacing = egui::vec2(10.0, 9.0);
+    style.spacing.button_padding = egui::vec2(12.0, 8.0);
+    ctx.set_global_style(style);
 }
 
 impl Default for SetupApp {
     fn default() -> Self {
         let config = SetupConfig::default();
-        let json_text = serde_json::to_string_pretty(&config.profile).unwrap_or_default();
+        let json_editor_text = serde_json::to_string_pretty(&config.profile).unwrap_or_default();
+        let parity_message = config
+            .profile
+            .parity_report(&config.source_inventory)
+            .map(|report| {
+                format!(
+                    "源 Mac 清单 {}：{} 项已分类，{} 项需手动补齐。",
+                    config.source_inventory.captured_at,
+                    report.covered(),
+                    report.manual.len()
+                )
+            })
+            .unwrap_or_else(|error| format!("源 Mac 清单校验失败：{error}"));
         Self {
             config,
-            is_running: false,
+            selected_target: ExecutionTarget::FullSetup,
+            run_state: RunState::Idle,
             progress: 0.0,
-            logs: vec![LogMessage::new(
-                LogLevel::Info,
-                "欢迎使用 Windows LTSC 显式配置工作站 GUI 工具。已成功从 setup_profile.json 加载全量显式环境清单。"
-            )],
-            log_rx: None,
-            progress_rx: None,
+            logs: vec![
+                LogMessage::new(
+                    LogLevel::Info,
+                    "Windows 原生 Rust 部署引擎已就绪；没有 WebView/Electron，也不执行项目外置 PS1。",
+                ),
+                LogMessage::new(LogLevel::Info, parity_message),
+            ],
+            event_rx: None,
+            cancellation: None,
+            worker: None,
             admin_status: is_admin(),
-            json_editor_text: json_text,
+            json_editor_text,
             show_json_editor: false,
             json_editor_error: None,
+            auto_scroll: true,
         }
     }
 }
@@ -102,260 +172,908 @@ impl Default for SetupApp {
 impl SetupApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
+        setup_style(&cc.egui_ctx);
         Self::default()
     }
 
-    fn start_setup(&mut self, target: ExecutionTarget) {
-        if self.is_running {
+    fn start_setup(&mut self) {
+        if self.run_state.active() {
+            return;
+        }
+        if self.selected_target.requires_admin() && !self.admin_status {
+            self.push_log(
+                LogLevel::Error,
+                "该任务需要管理员权限；请关闭程序并以管理员身份重新运行。",
+            );
+            return;
+        }
+        if !self.apply_profile_editor() {
+            self.show_json_editor = true;
             return;
         }
 
-        // Apply any JSON editor text updates if currently viewing editor
-        if self.show_json_editor {
-            if let Ok(profile) = serde_json::from_str::<SetupProfile>(&self.json_editor_text) {
-                self.config.profile = profile;
-                self.json_editor_error = None;
-            } else {
-                self.json_editor_error = Some("JSON 语法解析失败，请检查语法".to_string());
-                return;
-            }
-        }
-
-        self.is_running = true;
-        self.progress = 0.01;
+        self.progress = 0.0;
         self.logs.clear();
-        self.logs.push(LogMessage::new(LogLevel::Start, "初始化显式配置引擎线程..."));
-
-        let (log_tx, log_rx): (Sender<LogMessage>, Receiver<LogMessage>) = channel();
-        let (progress_tx, progress_rx): (Sender<f32>, Receiver<f32>) = channel();
-
-        self.log_rx = Some(log_rx);
-        self.progress_rx = Some(progress_rx);
+        self.run_state = RunState::Running;
+        let cancellation = CancellationToken::default();
+        self.cancellation = Some(cancellation.clone());
+        let (tx, rx) = channel();
+        self.event_rx = Some(rx);
 
         let mut config = self.config.clone();
-        config.target_mode = target;
-
-        thread::spawn(move || {
-            let engine = SetupEngine::new(log_tx, progress_tx, config);
-            engine.run_full_setup();
-        });
+        config.target_mode = self.selected_target;
+        self.worker = Some(thread::spawn(move || {
+            run_setup_worker(tx, config, cancellation)
+        }));
     }
 
-    fn export_logs(&self) {
-        let home_dir = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".to_string());
-        let log_file = std::path::Path::new(&home_dir).join("Desktop").join("ltsc_setup_log.txt");
-
-        let mut content = String::new();
-        for l in &self.logs {
-            let prefix = match l.level {
-                LogLevel::Info => "[INFO]",
-                LogLevel::Ok => "[OK]",
-                LogLevel::Warn => "[WARN]",
-                LogLevel::Error => "[ERROR]",
-                LogLevel::Start => "[START]",
-                LogLevel::End => "[END]",
-            };
-            content.push_str(&format!("[{}] {} {}\n", l.time, prefix, l.message));
+    fn cancel_setup(&mut self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+            self.run_state = RunState::Cancelling;
+            self.push_log(LogLevel::Warn, "已请求取消；正在终止当前子进程树…");
         }
-
-        let _ = std::fs::write(&log_file, content);
     }
 
-    fn export_profile_json(&self) {
-        let home_dir = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".to_string());
-        let json_file = std::path::Path::new(&home_dir).join("Desktop").join("setup_profile.json");
-        let _ = self.config.profile.save_to_file(&json_file);
-    }
-
-    fn poll_updates(&mut self) {
-        if let Some(ref rx) = self.log_rx {
-            while let Ok(msg) = rx.try_recv() {
-                if msg.level == LogLevel::End {
-                    self.is_running = false;
+    fn poll_events(&mut self) {
+        let mut events = Vec::new();
+        let mut disconnected = false;
+        if let Some(receiver) = &self.event_rx {
+            loop {
+                match receiver.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
                 }
-                self.logs.push(msg);
             }
         }
 
-        if let Some(ref rx) = self.progress_rx {
-            while let Ok(val) = rx.try_recv() {
-                self.progress = val;
+        let mut finished = false;
+        for event in events {
+            match event {
+                SetupEvent::Log(message) => self.logs.push(message),
+                SetupEvent::Progress(progress) => self.progress = progress,
+                SetupEvent::Finished(summary) => {
+                    self.run_state = RunState::Finished(summary);
+                    self.cancellation = None;
+                    finished = true;
+                }
             }
+        }
+        if self.logs.len() > 8_000 {
+            self.logs.drain(..self.logs.len() - 8_000);
+        }
+        if disconnected && self.run_state.active() && !finished {
+            self.push_log(
+                LogLevel::Error,
+                "部署线程失联；GUI 已退出运行态，请查看最后一条日志。",
+            );
+            self.run_state = RunState::Finished(SetupSummary::crashed(std::time::Duration::ZERO));
+            self.cancellation = None;
+            finished = true;
+        }
+        if finished {
+            self.event_rx = None;
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    fn apply_profile_editor(&mut self) -> bool {
+        let profile = match serde_json::from_str::<SetupProfile>(&self.json_editor_text) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.json_editor_error = Some(format!("JSON 解析失败：{error}"));
+                return false;
+            }
+        };
+        if let Err(error) = profile.validate() {
+            self.json_editor_error = Some(format!("配置校验失败：{error}"));
+            return false;
+        }
+        self.config.profile = profile;
+        self.json_editor_error = None;
+        true
+    }
+
+    fn reset_profile_editor(&mut self) {
+        self.config.profile = SetupProfile::load_default();
+        self.json_editor_text =
+            serde_json::to_string_pretty(&self.config.profile).unwrap_or_default();
+        self.json_editor_error = None;
+    }
+
+    fn push_log(&mut self, level: LogLevel, message: impl Into<String>) {
+        self.logs.push(LogMessage::new(level, message));
+    }
+
+    fn export_logs(&mut self) {
+        let path = export_path("ltsc_setup_log.txt");
+        let mut content = String::new();
+        for log in &self.logs {
+            let level = match log.level {
+                LogLevel::Info => "INFO",
+                LogLevel::Ok => "OK",
+                LogLevel::Warn => "WARN",
+                LogLevel::Error => "ERROR",
+                LogLevel::Start => "START",
+                LogLevel::End => "END",
+            };
+            content.push_str(&format!("[{}] [{level}] {}\n", log.time, log.message));
+        }
+        match std::fs::write(&path, content) {
+            Ok(()) => self.push_log(LogLevel::Ok, format!("日志已导出：{}", path.display())),
+            Err(error) => self.push_log(LogLevel::Error, format!("日志导出失败：{error}")),
+        }
+    }
+
+    fn export_profile(&mut self) {
+        if !self.apply_profile_editor() {
+            self.show_json_editor = true;
+            self.push_log(LogLevel::Error, "Profile 尚未通过校验，未导出旧配置。");
+            return;
+        }
+        let path = export_path("setup_profile.json");
+        match self.config.profile.save_to_file(&path) {
+            Ok(()) => self.push_log(LogLevel::Ok, format!("配置已导出：{}", path.display())),
+            Err(error) => self.push_log(LogLevel::Error, format!("配置导出失败：{error}")),
+        }
+    }
+
+    fn export_inventory(&mut self) {
+        let path = export_path("macos_inventory.json");
+        match serde_json::to_vec_pretty(&self.config.source_inventory)
+            .map_err(anyhow::Error::from)
+            .and_then(|content| std::fs::write(&path, content).map_err(anyhow::Error::from))
+        {
+            Ok(()) => self.push_log(LogLevel::Ok, format!("Mac 清单已导出：{}", path.display())),
+            Err(error) => self.push_log(LogLevel::Error, format!("Mac 清单导出失败：{error}")),
+        }
+    }
+
+    fn render_header(&self, root: &mut egui::Ui) {
+        egui::Panel::top("header")
+            .exact_size(72.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(PANEL)
+                    .stroke(egui::Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(egui::Margin::symmetric(22, 14)),
+            )
+            .show(root, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("LTSC WORKSPACE")
+                                .size(21.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "Rust native orchestrator · 可取消 · 有界超时 · 无项目 PS1",
+                            )
+                            .size(12.0)
+                            .color(MUTED),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        status_chip(ui, self.run_state.label(), self.run_state.color());
+                        ui.add_space(8.0);
+                        status_chip(
+                            ui,
+                            if self.admin_status {
+                                "管理员"
+                            } else {
+                                "非管理员"
+                            },
+                            if self.admin_status { SUCCESS } else { WARNING },
+                        );
+                    });
+                });
+            });
+    }
+
+    fn render_navigation(&mut self, root: &mut egui::Ui) {
+        egui::Panel::left("navigation")
+            .exact_size(218.0)
+            .resizable(false)
+            .frame(
+                egui::Frame::default()
+                    .fill(PANEL)
+                    .stroke(egui::Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(egui::Margin::same(14)),
+            )
+            .show(root, |ui| {
+                let scroll_height = (ui.available_height() - 48.0).max(180.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("navigation_scroll")
+                    .max_height(scroll_height)
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("部署范围")
+                                .size(12.0)
+                                .strong()
+                                .color(MUTED),
+                        );
+                        ui.add_space(4.0);
+                        for target in ExecutionTarget::ALL {
+                            let selected = self.selected_target == target;
+                            let button = egui::Button::new(
+                                egui::RichText::new(target.label())
+                                    .size(14.0)
+                                    .color(if selected { TEXT } else { MUTED }),
+                            )
+                            .selected(selected)
+                            .fill(if selected { ACCENT } else { CARD })
+                            .corner_radius(7)
+                            .min_size(egui::vec2(ui.available_width(), 38.0));
+                            if ui.add_enabled(!self.run_state.active(), button).clicked() {
+                                self.selected_target = target;
+                            }
+                        }
+
+                        ui.add_space(14.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("配置").size(12.0).strong().color(MUTED));
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 36.0],
+                                egui::Button::new("编辑 Profile JSON"),
+                            )
+                            .clicked()
+                        {
+                            self.show_json_editor = true;
+                        }
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 36.0],
+                                egui::Button::new("导出 Profile"),
+                            )
+                            .clicked()
+                        {
+                            self.export_profile();
+                        }
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 36.0],
+                                egui::Button::new("导出 Mac 清单"),
+                            )
+                            .clicked()
+                        {
+                            self.export_inventory();
+                        }
+                    });
+
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Profile v{}",
+                            self.config.profile.profile_version
+                        ))
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                    ui.label(
+                        egui::RichText::new("Windows 原生执行模式")
+                            .size(11.0)
+                            .color(SUCCESS),
+                    );
+                });
+            });
+    }
+
+    fn render_console(&mut self, root: &mut egui::Ui) {
+        egui::Panel::right("activity")
+            .default_size(430.0)
+            .min_size(340.0)
+            .max_size(560.0)
+            .resizable(true)
+            .frame(
+                egui::Frame::default()
+                    .fill(PANEL)
+                    .stroke(egui::Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(egui::Margin::same(14)),
+            )
+            .show(root, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("运行记录")
+                            .size(16.0)
+                            .strong()
+                            .color(TEXT),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("导出").clicked() {
+                            self.export_logs();
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.run_state.active(),
+                                egui::Button::new("清空").small(),
+                            )
+                            .clicked()
+                        {
+                            self.logs.clear();
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.auto_scroll, "跟随最新日志");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} 条", self.logs.len()))
+                                .size(11.0)
+                                .color(MUTED),
+                        );
+                    });
+                });
+                ui.add_space(4.0);
+
+                let reserved = 82.0;
+                egui::ScrollArea::vertical()
+                    .id_salt("log_scroll")
+                    .stick_to_bottom(self.auto_scroll)
+                    .max_height((ui.available_height() - reserved).max(120.0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        for log in &self.logs {
+                            log_row(ui, log);
+                        }
+                    });
+
+                ui.add_space(8.0);
+                ui.add(
+                    egui::ProgressBar::new(self.progress)
+                        .show_percentage()
+                        .animate(self.run_state.active())
+                        .corner_radius(6)
+                        .fill(ACCENT),
+                );
+                if let RunState::Finished(summary) = &self.run_state {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} · {} 失败 · {} 警告 · {:.1}s",
+                            summary.outcome.label(),
+                            summary.errors,
+                            summary.warnings,
+                            summary.elapsed.as_secs_f32()
+                        ))
+                        .size(11.0)
+                        .color(self.run_state.color()),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(self.run_state.label())
+                            .size(11.0)
+                            .color(self.run_state.color()),
+                    );
+                }
+            });
+    }
+
+    fn render_workspace(&mut self, root: &mut egui::Ui) {
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::default()
+                    .fill(BG)
+                    .inner_margin(egui::Margin::same(20)),
+            )
+            .show(root, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(self.selected_target.label())
+                            .size(26.0)
+                            .strong()
+                            .color(TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new(self.selected_target.description())
+                            .size(13.0)
+                            .color(MUTED),
+                    );
+                    ui.add_space(16.0);
+
+                    let packages = &self.config.profile.packages;
+                    let winget_count =
+                        packages.winget_core.len() + packages.winget_dev.len();
+                    let cli_count = packages.scoop_tools.len()
+                        + packages.cargo_packages.len()
+                        + packages.npm_globals.len()
+                        + packages.pip_packages.len()
+                        + packages.uv_tools.len();
+                    let extension_count =
+                        self.config.profile.vscode_config.extensions.len();
+                    let parity = self
+                        .config
+                        .profile
+                        .parity_report(&self.config.source_inventory)
+                        .ok();
+                    ui.columns(4, |columns| {
+                        metric_card(&mut columns[0], "WinGet 应用", winget_count);
+                        metric_card(&mut columns[1], "CLI / 包", cli_count);
+                        metric_card(&mut columns[2], "IDE 扩展", extension_count);
+                        metric_card(
+                            &mut columns[3],
+                            "Mac 清单覆盖",
+                            parity.as_ref().map_or(0, |report| report.covered()),
+                        );
+                    });
+                    ui.add_space(14.0);
+
+                    card(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("执行选项")
+                                .size(16.0)
+                                .strong()
+                                .color(TEXT),
+                        );
+                        ui.add_space(8.0);
+                        match self.selected_target {
+                            ExecutionTarget::FullSetup => {
+                                ui.columns(2, |columns| {
+                                    option(
+                                        &mut columns[0],
+                                        &mut self.config.include_dev_tools,
+                                        "开发工具与运行时",
+                                        "WinGet、Scoop、Cargo、NPM、Pip、UV",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[1],
+                                        &mut self.config.include_docker_wsl,
+                                        "Windows 可选功能",
+                                        "WSL2、.NET 3.5、Sandbox（按系统能力）",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[0],
+                                        &mut self.config.include_storage_optimization,
+                                        "存储介质优化",
+                                        "TRIM + Windows /O 自动选择 SSD/HDD 策略",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[1],
+                                        &mut self.config.include_vscode_extensions,
+                                        "IDE 设置与扩展",
+                                        "保留现有 JSON 键并合并受管配置",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[0],
+                                        &mut self.config.include_git_shell_configs,
+                                        "Git 与 Shell Profile",
+                                        "以受管区块更新，不覆盖个人内容",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[0],
+                                        &mut self.config.include_agent_skills,
+                                        "Agent Skills / Plugins",
+                                        "仅释放对应内置目录与 MCP 配置",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[1],
+                                        &mut self.config.include_deep_win_tweaks,
+                                        "系统性能与隐私",
+                                        "Rust 直接写入 Windows 注册表",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[0],
+                                        &mut self.config.include_ollama_models,
+                                        "Ollama 模型",
+                                        "长任务可取消，最长 30 分钟",
+                                        self.run_state.active(),
+                                    );
+                                    option(
+                                        &mut columns[1],
+                                        &mut self.config.include_npmrc_config,
+                                        "NPM 镜像配置",
+                                        "以受管区块保留已有 .npmrc",
+                                        self.run_state.active(),
+                                    );
+                                });
+                            }
+                            ExecutionTarget::DevToolsOnly => {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "按依赖顺序先检查包管理器与镜像，再安装各语言工具。",
+                                    )
+                                    .color(MUTED),
+                                );
+                            }
+                            ExecutionTarget::NetworkOnly => {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "先保存 TCP 原始配置；每条命令独立超时，取消会终止进程树。",
+                                    )
+                                    .color(MUTED),
+                                );
+                            }
+                            ExecutionTarget::StorageOnly => {
+                                ui.add_enabled_ui(!self.run_state.active(), |ui| {
+                                    ui.checkbox(
+                                        &mut self.config.profile.system_tweaks.enable_trim,
+                                        "启用 NTFS / ReFS TRIM 删除通知",
+                                    );
+                                    ui.checkbox(
+                                        &mut self.config.profile.system_tweaks.optimize_storage,
+                                        "使用 Windows /O 按介质类型优化所有固定卷",
+                                    );
+                                });
+                                ui.label(
+                                    egui::RichText::new(
+                                        "不会把 SSD 强制当 HDD 碎片整理；Windows 会自行选择 retrim 或 defrag。",
+                                    )
+                                    .color(MUTED),
+                                );
+                            }
+                            ExecutionTarget::WindowsFeaturesOnly => {
+                                let features = &mut self.config.profile.windows_features;
+                                ui.add_enabled_ui(!self.run_state.active(), |ui| {
+                                    ui.checkbox(&mut features.enable_wsl2, "WSL2 + VirtualMachinePlatform");
+                                    ui.checkbox(&mut features.enable_netfx3, ".NET Framework 3.5");
+                                    ui.checkbox(
+                                        &mut features.enable_windows_sandbox,
+                                        "Windows Sandbox（不支持时仅警告）",
+                                    );
+                                    ui.checkbox(
+                                        &mut features.enable_hyper_v,
+                                        "完整 Hyper-V（默认关闭，可能与其他虚拟化方案冲突）",
+                                    );
+                                });
+                            }
+                            ExecutionTarget::VSCodeExtensionsOnly => {
+                                ui.checkbox(
+                                    &mut self.config.include_npmrc_config,
+                                    "同时更新 NPM 受管配置区块",
+                                );
+                            }
+                            ExecutionTarget::AgentSkillsOnly => {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "只释放 Skills、Plugins 和 mcp_config.json，不再把字体或 Profile 误写入目标目录。",
+                                    )
+                                    .color(MUTED),
+                                );
+                            }
+                            ExecutionTarget::SystemTweaksOnly => {
+                                let tweaks = &mut self.config.profile.system_tweaks;
+                                ui.add_enabled_ui(!self.run_state.active(), |ui| {
+                                    ui.checkbox(
+                                        &mut tweaks.create_rollback_journal,
+                                        "变更前创建本机回滚账本",
+                                    );
+                                    ui.checkbox(
+                                        &mut tweaks.activate_ultimate_performance,
+                                        "启用卓越性能电源计划",
+                                    );
+                                    ui.checkbox(
+                                        &mut tweaks.extreme_ac_power_settings,
+                                        "AC 极限档：CPU 100%、不睡眠、关闭 USB/PCIe 节能",
+                                    );
+                                    ui.checkbox(
+                                        &mut tweaks.disable_hibernation,
+                                        "关闭休眠与快速启动（高风险，默认关闭）",
+                                    );
+                                    ui.checkbox(&mut tweaks.disable_telemetry, "限制遥测策略");
+                                    ui.checkbox(
+                                        &mut tweaks.disable_consumer_features,
+                                        "关闭消费内容推荐",
+                                    );
+                                });
+                            }
+                            ExecutionTarget::RollbackLatest => {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "将逆序恢复最近账本里的注册表、TCP 与原电源计划；不会卸载已安装的软件。",
+                                    )
+                                    .color(WARNING),
+                                );
+                            }
+                        }
+
+                        if matches!(
+                            self.selected_target,
+                            ExecutionTarget::FullSetup | ExecutionTarget::NetworkOnly
+                        ) {
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("网络模式")
+                                        .strong()
+                                        .color(TEXT),
+                                );
+                                ui.add_enabled_ui(!self.run_state.active(), |ui| {
+                                    egui::ComboBox::from_id_salt("network_mode")
+                                        .selected_text(match self.config.network_mode {
+                                            NetworkMode::Basic => "Basic",
+                                            NetworkMode::Optimized => "Optimized",
+                                            NetworkMode::Extreme => "Extreme",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut self.config.network_mode,
+                                                NetworkMode::Basic,
+                                                "Basic · 刷新 DNS",
+                                            );
+                                            ui.selectable_value(
+                                                &mut self.config.network_mode,
+                                                NetworkMode::Optimized,
+                                                "Optimized · DNS + TCP 自动调优",
+                                            );
+                                            ui.selectable_value(
+                                                &mut self.config.network_mode,
+                                                NetworkMode::Extreme,
+                                                "Extreme · RSS/RSC + Fast Open + CTCP/ECN",
+                                            );
+                                        });
+                                });
+                            });
+                        }
+                    });
+
+                    ui.add_space(14.0);
+                    card(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new(if self.run_state.active() {
+                                        "任务正在执行"
+                                    } else {
+                                        "准备开始"
+                                    })
+                                    .size(16.0)
+                                    .strong()
+                                    .color(TEXT),
+                                );
+                                ui.label(
+                                    egui::RichText::new(if self.admin_status {
+                                        "管理员权限已确认；执行结果会实时显示在右侧。"
+                                    } else {
+                                        "当前不是管理员；系统级步骤可能失败，建议以管理员身份运行。"
+                                    })
+                                    .size(12.0)
+                                    .color(if self.admin_status { MUTED } else { WARNING }),
+                                );
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if self.run_state.active() {
+                                        let cancel = egui::Button::new(
+                                            egui::RichText::new("取消任务")
+                                                .strong()
+                                                .color(TEXT),
+                                        )
+                                        .fill(DANGER)
+                                        .corner_radius(7)
+                                        .min_size(egui::vec2(116.0, 40.0));
+                                        if ui
+                                            .add_enabled(
+                                                !matches!(
+                                                    self.run_state,
+                                                    RunState::Cancelling
+                                                ),
+                                                cancel,
+                                            )
+                                            .clicked()
+                                        {
+                                            self.cancel_setup();
+                                        }
+                                    } else {
+                                        let needs_admin = self.selected_target.requires_admin()
+                                            && !self.admin_status;
+                                        let run = egui::Button::new(
+                                            egui::RichText::new(if needs_admin {
+                                                "需要管理员权限"
+                                            } else {
+                                                "开始部署"
+                                            })
+                                                .strong()
+                                                .color(TEXT),
+                                        )
+                                        .fill(ACCENT)
+                                        .corner_radius(7)
+                                        .min_size(egui::vec2(116.0, 40.0));
+                                        if ui
+                                            .add_enabled(
+                                                !needs_admin,
+                                                run,
+                                            )
+                                            .clicked()
+                                        {
+                                            self.start_setup();
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                    });
+                });
+            });
+    }
+
+    fn render_profile_editor(&mut self, ctx: &egui::Context) {
+        if !self.show_json_editor {
+            return;
+        }
+        let mut open = self.show_json_editor;
+        let mut apply = false;
+        let mut reset = false;
+        egui::Window::new("Profile JSON")
+            .open(&mut open)
+            .default_size([760.0, 620.0])
+            .min_size([560.0, 420.0])
+            .resizable(true)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("保存前会校验空值、重复包 ID 与重复列表项。").color(MUTED),
+                );
+                if let Some(error) = &self.json_editor_error {
+                    ui.label(egui::RichText::new(error).color(DANGER));
+                }
+                ui.add_space(4.0);
+                let editor_height = (ui.available_height() - 54.0).max(240.0);
+                egui::ScrollArea::vertical()
+                    .max_height(editor_height)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.json_editor_text)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(26),
+                        );
+                    });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!self.run_state.active(), egui::Button::new("应用配置"))
+                        .clicked()
+                    {
+                        apply = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.run_state.active(),
+                            egui::Button::new("恢复内置 Profile"),
+                        )
+                        .clicked()
+                    {
+                        reset = true;
+                    }
+                });
+            });
+        self.show_json_editor = open;
+        if reset {
+            self.reset_profile_editor();
+        }
+        if apply && self.apply_profile_editor() {
+            self.push_log(LogLevel::Ok, "Profile JSON 已校验并应用。");
+        }
+    }
+}
+
+impl Drop for SetupApp {
+    fn drop(&mut self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
     }
 }
 
 impl eframe::App for SetupApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_updates();
-
-        if self.is_running {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_events();
+        let ctx = root.ctx().clone();
+        if self.run_state.active() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(75));
         }
 
-        egui::TopBottomPanel::top("header_panel").show(ctx, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.heading("🚀 Windows LTSC Ultimate Workstation Setup (Explicit JSON Engine)");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.admin_status {
-                        ui.label(egui::RichText::new("🛡️ 管理员权限: 已具备").color(egui::Color32::GREEN).strong());
-                    } else {
-                        ui.label(egui::RichText::new("⚠️ 管理员权限: 未获取 (建议右键以管理员身份运行)").color(egui::Color32::RED).strong());
-                    }
-                });
-            });
-            ui.add_space(8.0);
+        self.render_header(root);
+        self.render_navigation(root);
+        self.render_console(root);
+        self.render_workspace(root);
+        self.render_profile_editor(&ctx);
+    }
+}
+
+fn status_chip(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
+    egui::Frame::default()
+        .fill(color.gamma_multiply(0.18))
+        .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.7)))
+        .corner_radius(255)
+        .inner_margin(egui::Margin::symmetric(10, 5))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(label).size(11.0).strong().color(color));
         });
+}
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.columns(2, |columns| {
-                // Left Column: Controls & Settings
-                columns[0].vertical(|ui| {
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.heading("⚙️ 显式配置表与开关");
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button(if self.show_json_editor { "📋 返回主面板" } else { "📜 查看/编辑 JSON 配置" }).clicked() {
-                                    self.show_json_editor = !self.show_json_editor;
-                                }
-                            });
-                        });
-                        ui.add_space(4.0);
+fn card<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::default()
+        .fill(CARD)
+        .stroke(egui::Stroke::new(1.0_f32, BORDER))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, contents)
+        .inner
+}
 
-                        if self.show_json_editor {
-                            ui.label(egui::RichText::new("JSON 配置表 (setup_profile.json): 可直接在此修改参数/软件列表").small().color(egui::Color32::LIGHT_BLUE));
-                            if let Some(ref err) = self.json_editor_error {
-                                ui.label(egui::RichText::new(err).color(egui::Color32::RED));
-                            }
-                            egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut self.json_editor_text)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                );
-                            });
-                        } else {
-                            let pkgs = &self.config.profile.packages;
-                            let ext_len = self.config.profile.vscode_config.extensions.len();
+fn metric_card(ui: &mut egui::Ui, label: &str, value: usize) {
+    card(ui, |ui| {
+        ui.label(
+            egui::RichText::new(value.to_string())
+                .size(24.0)
+                .strong()
+                .color(TEXT),
+        );
+        ui.label(egui::RichText::new(label).size(11.0).color(MUTED));
+    });
+}
 
-                            ui.label(egui::RichText::new(format!(
-                                "📊 显式软件矩阵: {} Winget, {} Scoop, {} Cargo, {} NPM, {} Pip, {} IDE 插件",
-                                pkgs.winget_core.len() + pkgs.winget_dev.len(),
-                                pkgs.scoop_tools.len(),
-                                pkgs.cargo_packages.len(),
-                                pkgs.npm_globals.len(),
-                                pkgs.pip_packages.len(),
-                                ext_len
-                            )).strong().color(egui::Color32::LIGHT_GREEN));
+fn option(ui: &mut egui::Ui, enabled: &mut bool, title: &str, description: &str, running: bool) {
+    egui::Frame::default()
+        .fill(BG.gamma_multiply(0.8))
+        .corner_radius(7)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.add_enabled_ui(!running, |ui| {
+                ui.checkbox(enabled, egui::RichText::new(title).strong().color(TEXT));
+            });
+            ui.label(egui::RichText::new(description).size(11.0).color(MUTED));
+        });
+}
 
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_dev_tools, format!("💻 部署 100+ 开发者软件库 ({} 个包已定义)", pkgs.winget_dev.len() + pkgs.scoop_tools.len() + pkgs.cargo_packages.len()));
-                            ui.label(egui::RichText::new("VS Code, Cursor, Git, Python, Node, Rust, rtk, claude-code, kimi-cli 等").small().color(egui::Color32::GRAY));
-
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_vscode_extensions, format!("🧩 同步 VS Code / Cursor 扩展 ({} 款) 与 settings.json", ext_len));
-
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_git_shell_configs, format!("🔑 部署 Git 用户 ({}) & PowerShell Profile 别名", self.config.profile.git_config.user_name));
-
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_agent_skills, "🤖 同步 55+ 真实 AI Agent Skills / Hooks (.gemini/config)");
-
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_docker_wsl, "🐳 部署 Docker & WSL2 虚拟化内核平台");
-
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_deep_win_tweaks, "🚀 Windows LTSC 深度性能与隐私优化");
-
-                            ui.add_space(4.0);
-                            ui.checkbox(&mut self.config.include_ollama_models, format!("🧠 自动预拉取本地 AI 模型 ({})", self.config.profile.ollama_models.join(", ")));
-
-                            ui.add_space(6.0);
-                            ui.label("🌐 网络与 WinHTTP 代理模式:");
-                            egui::ComboBox::from_id_salt("net_mode_combo")
-                                .selected_text(format!("{}", self.config.network_mode))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.config.network_mode, NetworkMode::Basic, "Basic (基础 TLS/DNS 协议硬化)");
-                                    ui.selectable_value(&mut self.config.network_mode, NetworkMode::Optimized, "Optimized (刷新 DNS & 优化 TCP 窗口)");
-                                    ui.selectable_value(&mut self.config.network_mode, NetworkMode::Extreme, "Extreme (CTCP & ECN + WinHTTP 代理)");
-                                });
-                        }
-                    });
-
-                    ui.add_space(8.0);
-
-                    ui.vertical_centered(|ui| {
-                        let btn_text = if self.is_running { "⏳ 正在一键终极部署中..." } else { "▶️ 一键开始全套配置" };
-                        let start_btn = egui::Button::new(egui::RichText::new(btn_text).size(18.0).strong())
-                            .min_size(egui::vec2(280.0, 42.0))
-                            .fill(if self.is_running { egui::Color32::DARK_GRAY } else { egui::Color32::from_rgb(0, 120, 215) });
-
-                        if ui.add_enabled(!self.is_running, start_btn).clicked() {
-                            self.start_setup(ExecutionTarget::FullSetup);
-                        }
-
-                        ui.add_space(6.0);
-
-                        ui.horizontal(|ui| {
-                            if ui.add_enabled(!self.is_running, egui::Button::new("🌐 仅优化网络")).clicked() {
-                                self.start_setup(ExecutionTarget::NetworkOnly);
-                            }
-                            if ui.add_enabled(!self.is_running, egui::Button::new("🤖 仅释出 Agent Skills")).clicked() {
-                                self.start_setup(ExecutionTarget::AgentSkillsOnly);
-                            }
-                            if ui.add_enabled(!self.is_running, egui::Button::new("🧩 仅同步 IDE 插件")).clicked() {
-                                self.start_setup(ExecutionTarget::VSCodeExtensionsOnly);
-                            }
-                            if ui.add_enabled(!self.is_running, egui::Button::new("🚀 仅应用系统优化")).clicked() {
-                                self.start_setup(ExecutionTarget::SystemTweaksOnly);
-                            }
-                        });
-                    });
-                });
-
-                // Right Column: Progress & Real-time Console Log Output
-                columns[1].vertical(|ui| {
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.heading("📋 实时日志与进度");
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("📂 导出 JSON 配置到桌面").clicked() {
-                                    self.export_profile_json();
-                                }
-                                if ui.button("💾 导出日志").clicked() {
-                                    self.export_logs();
-                                }
-                            });
-                        });
-                        ui.add_space(4.0);
-
-                        ui.add(egui::ProgressBar::new(self.progress).show_percentage().animate(self.is_running));
-
-                        ui.add_space(8.0);
-
-                        egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-                            for log in &self.logs {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(format!("[{}]", log.time)).color(egui::Color32::DARK_GRAY).monospace());
-
-                                    let (prefix, color) = match log.level {
-                                        LogLevel::Info  => ("[*]", egui::Color32::LIGHT_GRAY),
-                                        LogLevel::Ok    => ("[+]", egui::Color32::GREEN),
-                                        LogLevel::Warn  => ("[!]", egui::Color32::YELLOW),
-                                        LogLevel::Error => ("[-]", egui::Color32::RED),
-                                        LogLevel::Start => (">>>", egui::Color32::LIGHT_BLUE),
-                                        LogLevel::End   => ("<<<", egui::Color32::LIGHT_GREEN),
-                                    };
-
-                                    ui.label(egui::RichText::new(prefix).color(color).strong().monospace());
-                                    ui.label(egui::RichText::new(&log.message).color(color));
-                                });
-                            }
-                        });
-                    });
-                });
+fn log_row(ui: &mut egui::Ui, log: &LogMessage) {
+    let (marker, color) = match log.level {
+        LogLevel::Info => ("·", MUTED),
+        LogLevel::Ok => ("✓", SUCCESS),
+        LogLevel::Warn => ("!", WARNING),
+        LogLevel::Error => ("×", DANGER),
+        LogLevel::Start => ("›", ACCENT),
+        LogLevel::End => ("■", SUCCESS),
+    };
+    egui::Frame::default()
+        .fill(BG.gamma_multiply(0.8))
+        .corner_radius(5)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.label(
+                    egui::RichText::new(&log.time)
+                        .monospace()
+                        .size(10.0)
+                        .color(MUTED),
+                );
+                ui.label(egui::RichText::new(marker).strong().color(color));
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&log.message).size(11.0).color(color))
+                        .wrap(),
+                );
             });
         });
+}
+
+fn export_path(file_name: &str) -> PathBuf {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let desktop = home.join("Desktop");
+    if desktop.is_dir() {
+        desktop.join(file_name)
+    } else {
+        home.join(file_name)
     }
 }

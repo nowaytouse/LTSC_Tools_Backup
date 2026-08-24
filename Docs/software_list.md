@@ -1,66 +1,19 @@
-# LTSC Software & Capability Coverage (macOS Parity Edition)
+# 软件与环境一致性
 
-## Included By Default (Core Baseline)
+事实来源分成三层：
 
-The GUI's embedded profile (`src\assets\setup_profile.json`) installs these baseline applications via Winget:
+- [macos_inventory.json](../src/assets/macos_inventory.json)：源 Mac 的实际工具名称快照。
+- [parity_rules.json](../src/assets/parity_rules.json)：非同名工具、WSL 对等项、macOS 专属项和手动项。
+- [setup_profile.json](../src/assets/setup_profile.json)：Windows 自动安装矩阵和系统配置。
 
-- `7zip.7zip` (7-Zip Archiver)
-- `VideoLAN.VLC` (VLC Media Player)
-- `Google.Chrome` (Google Chrome)
-- `Notepad++.Notepad++` (Notepad++)
-- `ShareX.ShareX` (ShareX Screen Capture & Productivity)
-- `IrfanSkiljan.IrfanView` (IrfanView Media Viewer)
+当前 Windows 自动矩阵包括 34 个 WinGet 包、83 个 Scoop 工具，以及 Cargo、NPM、Pip/UV 工具。新增了 PowerToys、Sysinternals、x64/x86 Visual C++ Runtime、Codex CLI、Repomix、Krew、uutils-coreutils、libvips 和源 Mac 缺失的 Cargo 工具。
 
-## Included With Developer Mode Enabled (Default)
+部署前会计算完整覆盖报告：
 
-Developer mode provisions Windows-supported equivalents from the 2026-08-24 host snapshot (103 Homebrew formulae and 15 casks):
+- 自动：可由已配置 provider 安装。
+- 对等：Windows 内置、WSL 或已安装的替代工具。
+- macOS 专属：不能也不应复制到 Windows。
+- 手动：上游可能有 Windows 产物，但没有经过验证的 provider 清单。
+- 未映射：配置错误；任务直接停止。
 
-### Desktop Applications (Winget)
-
-- **IDEs & Editors**: `Microsoft.VisualStudioCode`, `Anysphere.Cursor`
-- **Browsers**: `Brave.Brave`, `LibreWolf.LibreWolf`
-- **Developer & Security Tools**: `Bitwarden.CLI`, `Bitwarden.Bitwarden`, `LocalSend.LocalSend`, `GnuPG.Gpg4win`, `Microsoft.OpenJDK.21`, `Microsoft.PowerShell`, `CondaForge.Miniforge3`, `EFF.Certbot`, `Cryptomator.Cryptomator`, `Docker.DockerDesktop`, `RedHat.PodmanDesktop`
-- **Graphics & Utilities**: `KDE.Krita`, `Pureref.PureRef`, `PeaZip.PeaZip`, `BlenderFoundation.Blender`
-
-### CLI Runtimes, Utilities & Tools (Scoop)
-
-- **Core Version Control & Cloud**: `git`, `gh`, `git-lfs`, `restic`, `chezmoi`, `atuin`, `direnv`
-- **Runtimes & Managers**: `python`, `nodejs-lts`, `go`, `zig`, `deno`, `fnm`, `bun`, `pnpm`, `mise`, `pyenv`, `pipx`, `ruby`, `volta`
-- **Build Systems & Compilers**: `cmake`, `meson`, `ninja`, `nasm`, `yasm`, `sccache`, `just`, `mold`, `gcc`
-- **Search, Shell & Modern CLI Utility Alternatives**: `ripgrep`, `fd`, `fzf`, `bat`, `eza`, `starship`, `zoxide`, `fastfetch`, `topgrade`, `tree`, `fdupes`, `jdupes`, `parallel`, `tealdeer`
-- **Linters & Formatters**: `actionlint`, `shellcheck`, `shfmt`
-- **Media, Audio & Conversion**: `ffmpeg`, `imagemagick`, `exiftool`, `apngasm`, `gifsicle`, `gifski`, `gpac`, `mediainfo`, `pngquant`, `dovi-tool`, `yt-dlp`, `gallery-dl`, `transmission-cli`, `poppler`, `tesseract`
-- **Network, Compression & Storage**: `aria2`, `wget`, `buku`, `lz4`, `zstd`, `xz`, `brotli`, `sqlite`, `sing-box`, `mihomo`
-- **Local AI & ML**: `ollama`
-
-### Rust & Cargo Ecosystem (`cargo install`)
-
-- **Analysis & Linting**: `cargo-audit`, `cargo-deny`, `cargo-machete`, `cargo-mutants`, `cargo-semver-checks`, `cargo-udeps`, `cargo-bloat`, `cargo-about`, `cargo-upgrades`
-- **Cargo Extensions**: `cargo-edit`, `cargo-expand`, `cargo-hack`, `cargo-license`, `flamegraph`, `rust-script`
-- **Token Optimization & AI Tools**: `rtk` (Rust Token Killer), `bkmr`, `yek`
-- **Storage & Disk Utilities**: `dupe-krill`, `fclones`, `kondo`, `krokiet`
-
-### NPM Global CLI Packages (`npm install -g`)
-
-- **AI & LLM Workflows**: `@anthropic-ai/claude-code`, `opencode-ai`, `run-deepseek-cli`, `uipro-cli`, `acp-ts`, `openclaw`, `context-mode`
-- **Development & Code Analysis**: `pyright`, `typescript`, `typescript-language-server`, `prettier`, `markdownlint-cli2`, `@alibaba-group/open-code-review`, `@diff4/cli`
-
-### Python & UV Tooling (`pip` & `uv tool install`)
-
-- **Data Science & ML Stack**: `numpy`, `scipy`, `scikit-learn`, `pillow`, `opencv-python`, `torch`, `lightgbm`, `openvino`, `sympy`, `networkx`, `PyWavelets`
-- **Utilities & Web**: `flask`, `flask-cors`, `tqdm`, `joblib`, `certifi`, `cryptography`, `filelock`, `fsspec`
-- **Code Hygiene**: `ruff`, `pyupgrade`
-- **Global UV Tools**: `kimi-cli`, `ruff`
-
-## Operational Parameters
-
-```powershell
-.\src\Scripts\00_QuickSetup.ps1 -SkipDevTools
-.\src\Scripts\00_QuickSetup.ps1 -SkipOptionalFeatures
-.\src\Scripts\00_QuickSetup.ps1 -SkipSystemTweaks
-.\src\Scripts\00_QuickSetup.ps1 -NetworkMode Basic|Optimized|Extreme
-```
-
-macOS-only packages are intentionally excluded instead of installing unrelated substitutes.
-
-Last Updated: 2026-08-24
+`.github/workflows/ci.yml` 每周在 Windows 上逐项验证所有 provider 端点和精确 WinGet ID，避免清单长期腐烂。
