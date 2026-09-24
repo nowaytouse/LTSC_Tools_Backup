@@ -779,7 +779,9 @@ impl SetupEngine {
     fn ensure_scoop(&self, winget_available: bool) -> bool {
         let current = self.command("scoop.cmd", &["--version"], 30);
         if current.succeeded() {
-            self.configure_scoop_buckets();
+            if !self.configure_scoop_buckets() {
+                return false;
+            }
             self.log(
                 LogLevel::Ok,
                 format!(
@@ -895,36 +897,37 @@ if %errorlevel%==0 (
             );
             return false;
         }
-        self.configure_scoop_buckets();
+        if !self.configure_scoop_buckets() {
+            return false;
+        }
         self.log(LogLevel::Ok, "Scoop 官方仓库与 shim 已由 Rust 配置完成。");
         true
     }
 
-    fn configure_scoop_buckets(&self) {
+    fn configure_scoop_buckets(&self) -> bool {
         let listed = self.command("scoop.cmd", &["bucket", "list"], 60);
         let output = if listed.succeeded() {
             listed.output
         } else {
             String::new()
         };
-        for bucket in ["extras", "versions"] {
-            if output
-                .lines()
-                .filter_map(|line| line.split_whitespace().next())
-                .any(|name| name.eq_ignore_ascii_case(bucket))
-            {
+        let mut ready = true;
+        for bucket in ["main", "extras", "versions"] {
+            if scoop_bucket_is_listed(&output, bucket) {
                 continue;
             }
-            let result = self.command("scoop.cmd", &["bucket", "add", bucket], 180);
+            let result = self.command("scoop.cmd", &["bucket", "add", bucket], 300);
             if result.succeeded() {
                 self.log(LogLevel::Ok, format!("Scoop bucket：{bucket}"));
             } else if !result.cancelled() {
+                ready = false;
                 self.log(
                     LogLevel::Error,
                     format!("Scoop bucket {bucket} 添加失败：{}", result.diagnostic()),
                 );
             }
         }
+        ready && !self.stopped()
     }
 
     fn step_environment_mirrors(&self) {
@@ -2194,6 +2197,13 @@ fn item_progress(start: f32, end: f32, index: usize, total: usize) -> f32 {
     }
 }
 
+fn scoop_bucket_is_listed(output: &str, bucket: &str) -> bool {
+    output
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .any(|name| name.eq_ignore_ascii_case(bucket))
+}
+
 fn package_is_listed(output: &str, name: &str) -> bool {
     let needle = name.to_ascii_lowercase();
     output.lines().any(|line| {
@@ -2293,8 +2303,8 @@ fn merge_json_value(target: &mut serde_json::Value, managed: &serde_json::Value)
 mod tests {
     use super::{
         extract_guid, item_progress, merge_json_value, package_is_listed,
-        parse_disable_delete_notify, python_package_is_listed, run_setup_worker, SetupEvent,
-        SetupOutcome,
+        parse_disable_delete_notify, python_package_is_listed, run_setup_worker,
+        scoop_bucket_is_listed, SetupEvent, SetupOutcome,
     };
     use crate::config::SetupConfig;
     use crate::utils::CancellationToken;
@@ -2306,6 +2316,15 @@ mod tests {
         assert!(package_is_listed(output, "kimi-cli"));
         assert!(package_is_listed(output, "@scope/tool"));
         assert!(!package_is_listed(output, "kimi"));
+    }
+
+    #[test]
+    fn scoop_requires_main_bucket_on_fresh_install() {
+        assert!(!scoop_bucket_is_listed("Name Source\n---- ------", "main"));
+        assert!(scoop_bucket_is_listed(
+            "Name Source\nmain https://github.com/ScoopInstaller/Main",
+            "main"
+        ));
     }
 
     #[test]
