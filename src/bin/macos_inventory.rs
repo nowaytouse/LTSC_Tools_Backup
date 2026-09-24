@@ -43,6 +43,7 @@ fn main() -> anyhow::Result<()> {
         git(&["pull", "--ff-only"])?;
     }
     let mut inventory = MacosInventory::capture()?;
+    let mut changed = true;
     if sync {
         let previous = MacosInventory::load_file(&output)?;
         if inventory
@@ -50,15 +51,16 @@ fn main() -> anyhow::Result<()> {
             .iter()
             .any(|warning| warning.starts_with("VS Code extensions 未采集"))
         {
-            inventory.vscode_extensions = previous.vscode_extensions;
+            inventory.vscode_extensions = previous.vscode_extensions.clone();
         }
         if inventory
             .warnings
             .iter()
             .any(|warning| warning.starts_with("Cursor extensions 未采集"))
         {
-            inventory.cursor_extensions = previous.cursor_extensions;
+            inventory.cursor_extensions = previous.cursor_extensions.clone();
         }
+        changed = !same_except_capture_time(&inventory, &previous);
     }
     inventory.validate()?;
     let report = SetupProfile::load_default().parity_report(&inventory)?;
@@ -89,13 +91,16 @@ fn main() -> anyhow::Result<()> {
             );
         }
     }
-    inventory.save_atomic(&output)?;
-    println!(
-        "已写入 {}：{} 个工具，{} 条采集警告",
-        output.display(),
-        inventory.item_count(),
-        inventory.warnings.len()
-    );
+    if changed {
+        inventory.save_atomic(&output)?;
+        println!(
+            "已更新 {}：{} 个工具",
+            output.display(),
+            inventory.item_count()
+        );
+    } else {
+        println!("清单无变化：{}", output.display());
+    }
     println!(
         "Windows 对等：{} 自动、{} 内置/替代、{} Mac 专属、{} 待手动、{} 未映射",
         report.automatic,
@@ -123,8 +128,8 @@ fn main() -> anyhow::Result<()> {
                 "--",
                 "src/assets/macos_inventory.json",
             ])?;
-            git(&["push"])?;
         }
+        git(&["push"])?;
         let status = git(&["status", "--porcelain=v1", "--untracked-files=all"])?;
         if !status.trim().is_empty() {
             anyhow::bail!("清单已处理，但工作区仍有改动：{status}");
@@ -136,6 +141,28 @@ fn main() -> anyhow::Result<()> {
         println!("Mac 清单已与远端同步；工作区干净");
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn same_except_capture_time(current: &MacosInventory, previous: &MacosInventory) -> bool {
+    let mut comparable = current.clone();
+    comparable.captured_at = previous.captured_at.clone();
+    &comparable == previous
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{same_except_capture_time, MacosInventory};
+
+    #[test]
+    fn unchanged_inventory_does_not_create_timestamp_only_commit() {
+        let previous = MacosInventory::load_embedded().unwrap();
+        let mut current = previous.clone();
+        current.captured_at = "later".into();
+        assert!(same_except_capture_time(&current, &previous));
+        current.homebrew_formulae.push("new-tool".into());
+        assert!(!same_except_capture_time(&current, &previous));
+    }
 }
 
 #[cfg(target_os = "macos")]
