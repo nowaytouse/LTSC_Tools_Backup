@@ -72,6 +72,22 @@ pub fn run_setup_worker(
     cancellation: CancellationToken,
 ) {
     let started = Instant::now();
+    let config = match config.resolved() {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = tx.send(SetupEvent::Log(LogMessage::new(
+                LogLevel::Error,
+                format!("部署计划无法生成：{error}"),
+            )));
+            let _ = tx.send(SetupEvent::Finished(SetupSummary {
+                outcome: SetupOutcome::CompletedWithErrors,
+                errors: 1,
+                warnings: 0,
+                elapsed: started.elapsed(),
+            }));
+            return;
+        }
+    };
     let engine_tx = tx.clone();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         SetupEngine::new(engine_tx, config, cancellation).run()
@@ -134,28 +150,30 @@ impl SetupEngine {
             ),
         );
 
-        match self.config.profile.validate() {
-            Ok(()) => {
-                if self.audit_source_parity() {
-                    if self.config.target_mode != ExecutionTarget::RollbackLatest {
+        if self.config.target_mode == ExecutionTarget::RollbackLatest {
+            self.step_restore_latest();
+        } else {
+            match self.config.profile.validate() {
+                Ok(()) => {
+                    if self.audit_source_parity() {
                         self.begin_rollback_journal();
-                    }
-                    match self.config.target_mode {
-                        ExecutionTarget::FullSetup => self.run_all_steps(),
-                        ExecutionTarget::NetworkOnly => self.step_network(),
-                        ExecutionTarget::StorageOnly => self.step_storage(),
-                        ExecutionTarget::WindowsFeaturesOnly => self.step_windows_features(),
-                        ExecutionTarget::AgentSkillsOnly => self.step_agent_skills(),
-                        ExecutionTarget::DevToolsOnly => self.run_dev_tools_only(),
-                        ExecutionTarget::VSCodeExtensionsOnly => {
-                            self.step_vscode_and_tools_config(0.1, 0.95)
+                        match self.config.target_mode {
+                            ExecutionTarget::FullSetup => self.run_all_steps(),
+                            ExecutionTarget::NetworkOnly => self.step_network(),
+                            ExecutionTarget::StorageOnly => self.step_storage(),
+                            ExecutionTarget::WindowsFeaturesOnly => self.step_windows_features(),
+                            ExecutionTarget::AgentSkillsOnly => self.step_agent_skills(),
+                            ExecutionTarget::DevToolsOnly => self.run_dev_tools_only(),
+                            ExecutionTarget::VSCodeExtensionsOnly => {
+                                self.step_vscode_and_tools_config(0.1, 0.95)
+                            }
+                            ExecutionTarget::SystemTweaksOnly => self.step_deep_win_tweaks(),
+                            ExecutionTarget::RollbackLatest => unreachable!(),
                         }
-                        ExecutionTarget::SystemTweaksOnly => self.step_deep_win_tweaks(),
-                        ExecutionTarget::RollbackLatest => self.step_restore_latest(),
                     }
                 }
+                Err(error) => self.log(LogLevel::Error, format!("配置校验失败：{error}")),
             }
-            Err(error) => self.log(LogLevel::Error, format!("配置校验失败：{error}")),
         }
 
         self.finish_rollback_journal();
@@ -208,7 +226,7 @@ impl SetupEngine {
                 self.emit(
                     LogLevel::Ok,
                     format!(
-                        "macOS 清单 {} 项：{} 自动安装，{} Windows/WSL 对等，{} macOS 专属，{} 待手动",
+                        "macOS 清单 {} 项：{} 自动安装，{} Windows 内置/替代，{} macOS 专属，{} 待手动",
                         self.config.source_inventory.item_count(),
                         report.automatic,
                         report.compatible,
@@ -343,7 +361,9 @@ impl SetupEngine {
             return;
         }
 
-        self.step_uwp_apps(managers.winget, 0.73, 0.79);
+        if self.config.include_curated_extras {
+            self.step_uwp_apps(managers.winget, 0.73, 0.79);
+        }
         if self.stopped() {
             return;
         }
@@ -417,8 +437,15 @@ impl SetupEngine {
         }
         self.step_environment_mirrors();
         self.progress(0.18);
+        if self.stopped() {
+            return;
+        }
+        self.step_core_apps(managers.winget, 0.18, 0.28);
         if !self.stopped() {
-            self.step_dev_suite(managers, 0.18, 0.96);
+            self.step_dev_suite(managers, 0.28, 0.96);
+        }
+        if !self.stopped() {
+            self.step_audit(managers);
         }
     }
 
@@ -586,8 +613,15 @@ impl SetupEngine {
 
     fn step_package_managers(&self) -> ManagerAvailability {
         self.log(LogLevel::Start, "包管理器预检与原生引导");
-        let winget = self.ensure_winget();
-        let scoop = self.ensure_scoop(winget);
+        let packages = &self.config.profile.packages;
+        let need_scoop = !packages.scoop_tools.is_empty();
+        let need_winget = !packages.winget_core.is_empty()
+            || !packages.winget_dev.is_empty()
+            || (self.config.target_mode == ExecutionTarget::FullSetup
+                && self.config.include_curated_extras)
+            || need_scoop;
+        let winget = need_winget && self.ensure_winget();
+        let scoop = need_scoop && self.ensure_scoop(winget);
         ManagerAvailability { winget, scoop }
     }
 
@@ -606,61 +640,11 @@ impl SetupEngine {
 
         self.log(
             LogLevel::Warn,
-            "未发现 WinGet，改用 curl + DISM 的 Windows 原生引导路径。",
+            "未发现 WinGet；下载官方安装包和依赖，为当前用户安装。",
         );
-        let bundle = std::env::temp_dir().join(format!(
-            "ltsc-tools-winget-{}.msixbundle",
-            std::process::id()
-        ));
-        let bundle_text = bundle.to_string_lossy().into_owned();
-        let download = self.command(
-            "curl.exe",
-            &[
-                "-fL",
-                "--retry",
-                "3",
-                "--connect-timeout",
-                "20",
-                "--max-time",
-                "300",
-                "https://aka.ms/getwinget",
-                "-o",
-                &bundle_text,
-            ],
-            360,
-        );
-        if !download.succeeded() {
-            if !download.cancelled() {
-                self.log(
-                    LogLevel::Error,
-                    format!("WinGet 安装包下载失败：{}", download.diagnostic()),
-                );
-            }
-            let _ = std::fs::remove_file(&bundle);
-            return false;
-        }
-
-        let package_arg = format!("/PackagePath:{bundle_text}");
-        let provision = self.command(
-            "dism.exe",
-            &[
-                "/Online",
-                "/Add-ProvisionedAppxPackage",
-                &package_arg,
-                "/SkipLicense",
-            ],
-            600,
-        );
-        let _ = std::fs::remove_file(&bundle);
-        if !provision.succeeded_or_reboot_required() {
-            if !provision.cancelled() {
-                self.log(
-                    LogLevel::Error,
-                    format!(
-                        "WinGet 原生安装失败；系统可能缺少 App Installer 依赖：{}",
-                        provision.diagnostic()
-                    ),
-                );
+        if let Err(error) = self.bootstrap_winget() {
+            if !self.stopped() {
+                self.log(LogLevel::Error, format!("WinGet 原生引导失败：{error:#}"));
             }
             return false;
         }
@@ -675,10 +659,121 @@ impl SetupEngine {
         } else {
             self.log(
                 LogLevel::Error,
-                "WinGet 已由 DISM 配置，但当前用户别名尚不可用；请重启后重试。",
+                format!(
+                    "WinGet 已安装，但当前用户别名尚不可用：{}",
+                    verified.diagnostic()
+                ),
             );
             false
         }
+    }
+
+    fn bootstrap_winget(&self) -> anyhow::Result<()> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ltsc-winget-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&root)?;
+        let result = (|| -> anyhow::Result<()> {
+            let release = self.command(
+                "curl.exe",
+                &[
+                    "--fail",
+                    "--location",
+                    "--silent",
+                    "--show-error",
+                    "--max-time",
+                    "60",
+                    "https://api.github.com/repos/microsoft/winget-cli/releases/latest",
+                ],
+                75,
+            );
+            if !release.succeeded() {
+                anyhow::bail!("无法读取 WinGet 最新稳定版：{}", release.diagnostic());
+            }
+            let metadata: serde_json::Value = serde_json::from_str(&release.output)?;
+            let tag = metadata["tag_name"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("WinGet 发布信息缺少版本号"))?;
+            if !tag.starts_with('v')
+                || !tag
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b".-_".contains(&byte))
+            {
+                anyhow::bail!("WinGet 发布版本号格式异常：{tag}");
+            }
+            let bundle = root.join("Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle");
+            let archive = root.join("DesktopAppInstaller_Dependencies.zip");
+            for (label, path) in [("WinGet 安装包", &bundle), ("WinGet 依赖", &archive)] {
+                self.log(LogLevel::Info, format!("正在下载{label}（可取消）"));
+                let name = path.file_name().unwrap().to_string_lossy();
+                let url = format!(
+                    "https://github.com/microsoft/winget-cli/releases/download/{tag}/{name}"
+                );
+                let destination = path.to_string_lossy();
+                let download = self.command(
+                    "curl.exe",
+                    &[
+                        "--fail",
+                        "--location",
+                        "--retry",
+                        "3",
+                        "--connect-timeout",
+                        "20",
+                        "--max-time",
+                        "600",
+                        "--output",
+                        &destination,
+                        &url,
+                    ],
+                    630,
+                );
+                if !download.succeeded() {
+                    anyhow::bail!("{label}下载失败：{}", download.diagnostic());
+                }
+                if std::fs::metadata(path)?.len() < 1024 {
+                    anyhow::bail!("{label}下载内容异常短");
+                }
+            }
+            self.log(LogLevel::Info, "正在展开 WinGet 依赖");
+            let archive_text = archive.to_string_lossy();
+            let root_text = root.to_string_lossy();
+            let extract = self.command("tar.exe", &["-xf", &archive_text, "-C", &root_text], 180);
+            if !extract.succeeded() {
+                anyhow::bail!("WinGet 依赖解包失败：{}", extract.diagnostic());
+            }
+            let mut dependencies = std::fs::read_dir(root.join("x64"))?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<_>>>()?;
+            dependencies.retain(|path| {
+                path.is_file()
+                    && path.extension().is_some_and(|extension| {
+                        let extension = extension.to_string_lossy();
+                        extension.eq_ignore_ascii_case("appx")
+                            || extension.eq_ignore_ascii_case("msix")
+                            || extension.eq_ignore_ascii_case("msixbundle")
+                    })
+            });
+            dependencies.sort();
+            if dependencies.is_empty() {
+                anyhow::bail!("官方依赖包中没有 x64 MSIX/AppX，停止安装");
+            }
+            self.log(
+                LogLevel::Info,
+                format!(
+                    "通过 Windows 部署接口安装 WinGet 和 {} 个依赖",
+                    dependencies.len()
+                ),
+            );
+            crate::winget_bootstrap::install(&bundle, &dependencies, &self.cancellation)
+        })();
+        if let Err(error) = std::fs::remove_dir_all(&root) {
+            self.log(
+                LogLevel::Warn,
+                format!("WinGet 临时下载目录未能清理（{}）：{error}", root.display()),
+            );
+        }
+        result
     }
 
     fn ensure_scoop(&self, winget_available: bool) -> bool {
@@ -1275,7 +1370,7 @@ if %errorlevel%==0 (
                     packages.cargo_packages.len(),
                 ));
             }
-        } else {
+        } else if !packages.cargo_packages.is_empty() {
             self.log(
                 LogLevel::Error,
                 "cargo 不可用，已跳过 Rust CLI；请确认 Rustlang.Rustup 安装成功。",
@@ -1310,7 +1405,7 @@ if %errorlevel%==0 (
                     packages.npm_globals.len(),
                 ));
             }
-        } else {
+        } else if !packages.npm_globals.is_empty() {
             self.log(LogLevel::Error, "npm 不可用，已跳过全局 NPM 工具。");
             self.progress(npm_end);
         }
@@ -1342,7 +1437,7 @@ if %errorlevel%==0 (
                     packages.pip_packages.len(),
                 ));
             }
-        } else {
+        } else if !packages.pip_packages.is_empty() {
             self.log(LogLevel::Error, "python 不可用，已跳过 Pip 包。");
             self.progress(pip_end);
         }
@@ -1367,7 +1462,7 @@ if %errorlevel%==0 (
                 }
                 self.progress(item_progress(pip_end, end, index, packages.uv_tools.len()));
             }
-        } else {
+        } else if !packages.uv_tools.is_empty() {
             self.log(LogLevel::Warn, "uv 不可用，已跳过 UV 工具。");
             self.progress(end);
         }
@@ -1762,7 +1857,7 @@ if %errorlevel%==0 (
 
     fn step_restore_latest(&self) {
         self.log(LogLevel::Start, "按最近回滚账本逆序恢复系统设置");
-        let journal = match RollbackJournal::load_latest() {
+        let mut journal = match RollbackJournal::load_latest() {
             Ok(journal) => journal,
             Err(error) => {
                 self.log(LogLevel::Error, format!("无法加载回滚账本：{error}"));
@@ -1786,6 +1881,7 @@ if %errorlevel%==0 (
         }
 
         let total = journal.actions.len();
+        let mut failed = false;
         for (index, action) in journal.actions.iter().rev().enumerate() {
             if self.stopped() {
                 return;
@@ -1806,10 +1902,13 @@ if %errorlevel%==0 (
                             LogLevel::Ok,
                             format!("已恢复注册表：{hive:?}\\{path}\\{name}"),
                         ),
-                        Err(error) => self.log(
-                            LogLevel::Error,
-                            format!("注册表恢复失败 {hive:?}\\{path}\\{name}：{error}"),
-                        ),
+                        Err(error) => {
+                            failed = true;
+                            self.log(
+                                LogLevel::Error,
+                                format!("注册表恢复失败 {hive:?}\\{path}\\{name}：{error}"),
+                            );
+                        }
                     }
                 }
                 RollbackAction::Command {
@@ -1822,6 +1921,7 @@ if %errorlevel%==0 (
                     if result.succeeded() {
                         self.log(LogLevel::Ok, label);
                     } else if !result.cancelled() {
+                        failed = true;
                         self.log(
                             LogLevel::Error,
                             format!("{label}失败：{}", result.diagnostic()),
@@ -1831,27 +1931,41 @@ if %errorlevel%==0 (
             }
             self.progress(item_progress(0.05, 0.98, index, total));
         }
+        if !failed && !self.stopped() {
+            if let Err(error) = journal.mark_restored() {
+                self.log(LogLevel::Error, format!("无法标记回滚已完成：{error}"));
+            }
+        }
     }
 
     fn step_audit(&self, managers: ManagerAvailability) {
         self.log(LogLevel::Start, "最终命令可用性审计");
         let mut probes = Vec::new();
+        let packages = &self.config.profile.packages;
         if managers.winget {
             probes.push(("WinGet", "winget.exe", vec!["--version"]));
         }
         if managers.scoop {
             probes.push(("Scoop", "scoop.cmd", vec!["--version"]));
         }
-        if self.config.include_dev_tools {
-            probes.extend([
-                ("Git", "git", vec!["--version"]),
-                ("Python", "python", vec!["--version"]),
-                ("Node", "node", vec!["--version"]),
-                ("Cargo", "cargo", vec!["--version"]),
-                ("uv", "uv", vec!["--version"]),
-                ("rtk", "rtk", vec!["--version"]),
-                ("PowerShell 7", "pwsh", vec!["--version"]),
-            ]);
+        if packages.winget_dev.iter().any(|app| app.id == "Git.Git") {
+            probes.push(("Git", "git", vec!["--version"]));
+        }
+        if packages.scoop_tools.iter().any(|name| name == "python") {
+            probes.push(("Python", "python", vec!["--version"]));
+        }
+        if packages.scoop_tools.iter().any(|name| name == "nodejs-lts") {
+            probes.push(("Node", "node", vec!["--version"]));
+        }
+        if packages
+            .winget_dev
+            .iter()
+            .any(|app| app.id == "Rustlang.Rustup")
+        {
+            probes.push(("Cargo", "cargo", vec!["--version"]));
+        }
+        if packages.scoop_tools.iter().any(|name| name == "uv") {
+            probes.push(("uv", "uv", vec!["--version"]));
         }
         if self.config.include_docker_wsl {
             probes.push(("WSL", "wsl.exe", vec!["--status"]));
@@ -1864,6 +1978,11 @@ if %errorlevel%==0 (
             let result = self.command(program, &args, 30);
             if result.succeeded() {
                 self.log(LogLevel::Ok, format!("审计通过：{label}"));
+            } else if label == "WSL" {
+                self.log(
+                    LogLevel::Warn,
+                    format!("WSL 启用后可能需要重启再验证：{}", result.diagnostic()),
+                );
             } else {
                 self.log(
                     LogLevel::Error,

@@ -1,5 +1,6 @@
 use crate::config::{ExecutionTarget, NetworkMode, SetupConfig, SetupProfile};
 use crate::installer::{run_setup_worker, SetupEvent, SetupOutcome, SetupSummary};
+use crate::inventory::MacosInventory;
 use crate::utils::{is_admin, CancellationToken, LogLevel, LogMessage};
 use eframe::egui;
 use std::path::PathBuf;
@@ -62,6 +63,10 @@ pub struct SetupApp {
     event_rx: Option<Receiver<SetupEvent>>,
     cancellation: Option<CancellationToken>,
     worker: Option<thread::JoinHandle<()>>,
+    inventory_rx: Option<Receiver<Result<MacosInventory, String>>>,
+    inventory_worker: Option<thread::JoinHandle<()>>,
+    inventory_cancellation: Option<CancellationToken>,
+    inventory_error: Option<String>,
     admin_status: bool,
     json_editor_text: String,
     show_json_editor: bool,
@@ -131,7 +136,29 @@ fn setup_style(ctx: &egui::Context) {
 
 impl Default for SetupApp {
     fn default() -> Self {
-        let config = SetupConfig::default();
+        let mut config = SetupConfig::default();
+        let mut inventory_warning = None;
+        let inventory_error = match MacosInventory::load_cached_or_embedded() {
+            Ok(inventory) => {
+                config.source_inventory = inventory;
+                None
+            }
+            Err(error) => match MacosInventory::load_embedded().and_then(|inventory| {
+                inventory.validate()?;
+                Ok(inventory)
+            }) {
+                Ok(inventory) => {
+                    config.source_inventory = inventory;
+                    inventory_warning = Some(format!(
+                        "本机 Mac 清单缓存无效（{error}）；已退回内置清单，请联网更新"
+                    ));
+                    None
+                }
+                Err(fallback_error) => Some(format!(
+                    "本机及内置 Mac 清单均无效：{error}；{fallback_error}"
+                )),
+            },
+        };
         let json_editor_text = serde_json::to_string_pretty(&config.profile).unwrap_or_default();
         let parity_message = config
             .profile
@@ -145,21 +172,29 @@ impl Default for SetupApp {
                 )
             })
             .unwrap_or_else(|error| format!("源 Mac 清单校验失败：{error}"));
+        let mut logs = vec![
+            LogMessage::new(
+                LogLevel::Info,
+                "Windows 原生 Rust 部署引擎已就绪；没有 WebView/Electron，也不执行项目外置 PS1。",
+            ),
+            LogMessage::new(LogLevel::Info, parity_message),
+        ];
+        if let Some(warning) = inventory_warning {
+            logs.push(LogMessage::new(LogLevel::Warn, warning));
+        }
         Self {
             config,
-            selected_target: ExecutionTarget::FullSetup,
+            selected_target: ExecutionTarget::DevToolsOnly,
             run_state: RunState::Idle,
             progress: 0.0,
-            logs: vec![
-                LogMessage::new(
-                    LogLevel::Info,
-                    "Windows 原生 Rust 部署引擎已就绪；没有 WebView/Electron，也不执行项目外置 PS1。",
-                ),
-                LogMessage::new(LogLevel::Info, parity_message),
-            ],
+            logs,
             event_rx: None,
             cancellation: None,
             worker: None,
+            inventory_rx: None,
+            inventory_worker: None,
+            inventory_cancellation: None,
+            inventory_error,
             admin_status: is_admin(),
             json_editor_text,
             show_json_editor: false,
@@ -180,6 +215,10 @@ impl SetupApp {
         if self.run_state.active() {
             return;
         }
+        if let Some(error) = &self.inventory_error {
+            self.push_log(LogLevel::Error, error.clone());
+            return;
+        }
         if self.selected_target.requires_admin() && !self.admin_status {
             self.push_log(
                 LogLevel::Error,
@@ -192,6 +231,13 @@ impl SetupApp {
             return;
         }
 
+        let mut config = self.config.clone();
+        config.target_mode = self.selected_target;
+        if let Err(error) = config.resolved() {
+            self.push_log(LogLevel::Error, format!("无法生成部署计划：{error}"));
+            return;
+        }
+
         self.progress = 0.0;
         self.logs.clear();
         self.run_state = RunState::Running;
@@ -200,11 +246,26 @@ impl SetupApp {
         let (tx, rx) = channel();
         self.event_rx = Some(rx);
 
-        let mut config = self.config.clone();
-        config.target_mode = self.selected_target;
         self.worker = Some(thread::spawn(move || {
             run_setup_worker(tx, config, cancellation)
         }));
+    }
+
+    fn refresh_inventory(&mut self) {
+        if self.run_state.active() || self.inventory_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = channel();
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
+        self.inventory_rx = Some(rx);
+        self.inventory_cancellation = Some(cancellation);
+        self.inventory_worker = Some(thread::spawn(move || {
+            let result = MacosInventory::fetch_latest(&worker_cancellation)
+                .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        }));
+        self.push_log(LogLevel::Info, "正在从仓库更新 Mac 工具清单…");
     }
 
     fn cancel_setup(&mut self) {
@@ -216,6 +277,36 @@ impl SetupApp {
     }
 
     fn poll_events(&mut self) {
+        let inventory_result =
+            self.inventory_rx
+                .as_ref()
+                .and_then(|receiver| match receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(TryRecvError::Disconnected) => Some(Err("清单更新线程失联".into())),
+                    Err(TryRecvError::Empty) => None,
+                });
+        if let Some(result) = inventory_result {
+            match result {
+                Ok(inventory) => {
+                    self.push_log(
+                        LogLevel::Ok,
+                        format!(
+                            "Mac 清单已更新：{} 项，采集于 {}",
+                            inventory.item_count(),
+                            inventory.captured_at
+                        ),
+                    );
+                    self.config.source_inventory = inventory;
+                    self.inventory_error = None;
+                }
+                Err(error) => self.push_log(LogLevel::Error, error),
+            }
+            self.inventory_rx = None;
+            self.inventory_cancellation = None;
+            if let Some(worker) = self.inventory_worker.take() {
+                let _ = worker.join();
+            }
+        }
         let mut events = Vec::new();
         let mut disconnected = false;
         if let Some(receiver) = &self.event_rx {
@@ -348,17 +439,15 @@ impl SetupApp {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new("LTSC WORKSPACE")
+                            egui::RichText::new("LTSC 工作环境")
                                 .size(21.0)
                                 .strong()
                                 .color(TEXT),
                         );
                         ui.label(
-                            egui::RichText::new(
-                                "Rust native orchestrator · 可取消 · 有界超时 · 无项目 PS1",
-                            )
-                            .size(12.0)
-                            .color(MUTED),
+                            egui::RichText::new("补齐 Mac 工具 · 部署 Windows · 随时查看结果")
+                                .size(12.0)
+                                .color(MUTED),
                         );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -420,34 +509,48 @@ impl SetupApp {
                         ui.add_space(14.0);
                         ui.separator();
                         ui.add_space(8.0);
-                        ui.label(egui::RichText::new("配置").size(12.0).strong().color(MUTED));
+                        ui.label(
+                            egui::RichText::new("Mac 工具清单")
+                                .size(12.0)
+                                .strong()
+                                .color(MUTED),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} 项 · {}",
+                                self.config.source_inventory.item_count(),
+                                self.config.source_inventory.captured_at
+                            ))
+                            .size(11.0)
+                            .color(MUTED),
+                        );
                         if ui
-                            .add_sized(
-                                [ui.available_width(), 36.0],
-                                egui::Button::new("编辑 Profile JSON"),
+                            .add_enabled(
+                                !self.run_state.active() && self.inventory_rx.is_none(),
+                                egui::Button::new(if self.inventory_rx.is_some() {
+                                    "正在更新…"
+                                } else {
+                                    "从 GitHub 更新清单"
+                                })
+                                .min_size(egui::vec2(ui.available_width(), 36.0)),
                             )
                             .clicked()
                         {
-                            self.show_json_editor = true;
+                            self.refresh_inventory();
                         }
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 36.0],
-                                egui::Button::new("导出 Profile"),
-                            )
-                            .clicked()
-                        {
-                            self.export_profile();
-                        }
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 36.0],
-                                egui::Button::new("导出 Mac 清单"),
-                            )
-                            .clicked()
-                        {
-                            self.export_inventory();
-                        }
+                        egui::CollapsingHeader::new("高级配置与导出")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if ui.button("编辑 Profile JSON").clicked() {
+                                    self.show_json_editor = true;
+                                }
+                                if ui.button("导出 Profile").clicked() {
+                                    self.export_profile();
+                                }
+                                if ui.button("导出 Mac 清单").clicked() {
+                                    self.export_inventory();
+                                }
+                            });
                     });
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -579,25 +682,40 @@ impl SetupApp {
                     );
                     ui.add_space(16.0);
 
-                    let packages = &self.config.profile.packages;
-                    let winget_count =
-                        packages.winget_core.len() + packages.winget_dev.len();
-                    let cli_count = packages.scoop_tools.len()
-                        + packages.cargo_packages.len()
-                        + packages.npm_globals.len()
-                        + packages.pip_packages.len()
-                        + packages.uv_tools.len();
-                    let extension_count =
-                        self.config.profile.vscode_config.extensions.len();
+                    let package_target = matches!(
+                        self.selected_target,
+                        ExecutionTarget::FullSetup | ExecutionTarget::DevToolsOnly
+                    );
+                    let mut request = self.config.clone();
+                    request.target_mode = self.selected_target;
+                    let plan = request.resolved();
+                    let packages = plan.as_ref().ok().map(|config| &config.profile.packages);
+                    let winget_count = packages.filter(|_| package_target).map_or(0, |packages| {
+                        packages.winget_core.len() + packages.winget_dev.len()
+                    });
+                    let cli_count = packages.filter(|_| package_target).map_or(0, |packages| {
+                        packages.scoop_tools.len()
+                            + packages.cargo_packages.len()
+                            + packages.npm_globals.len()
+                            + packages.pip_packages.len()
+                            + packages.uv_tools.len()
+                    });
+                    let extension_count = if self.selected_target == ExecutionTarget::FullSetup
+                        && self.config.include_vscode_extensions
+                    {
+                        self.config.profile.vscode_config.extensions.len()
+                    } else {
+                        0
+                    };
                     let parity = self
                         .config
                         .profile
                         .parity_report(&self.config.source_inventory)
                         .ok();
                     ui.columns(4, |columns| {
-                        metric_card(&mut columns[0], "WinGet 应用", winget_count);
-                        metric_card(&mut columns[1], "CLI / 包", cli_count);
-                        metric_card(&mut columns[2], "IDE 扩展", extension_count);
+                        metric_card(&mut columns[0], "本次 WinGet 候选", winget_count);
+                        metric_card(&mut columns[1], "本次 CLI 候选", cli_count);
+                        metric_card(&mut columns[2], "本次 IDE 扩展", extension_count);
                         metric_card(
                             &mut columns[3],
                             "Mac 清单覆盖",
@@ -605,6 +723,53 @@ impl SetupApp {
                         );
                     });
                     ui.add_space(14.0);
+
+                    if let Some(error) = &self.inventory_error {
+                        ui.colored_label(DANGER, error);
+                    }
+                    if package_target {
+                        card(ui, |ui| {
+                            ui.label(egui::RichText::new("本次部署计划").size(16.0).strong().color(TEXT));
+                            match &plan {
+                                Ok(plan) => {
+                                    ui.label(
+                                        egui::RichText::new(if self.config.include_curated_extras {
+                                            "已选择完整预设目录；已安装项目会在执行时跳过。"
+                                        } else {
+                                            "仅安装 Mac 清单的 Windows 对等项及所需运行时；已安装项目会在执行时跳过。"
+                                        })
+                                        .color(MUTED),
+                                    );
+                                    egui::CollapsingHeader::new("查看软件清单")
+                                        .default_open(false)
+                                        .show(ui, |ui| {
+                                            let packages = &plan.profile.packages;
+                                            package_plan_row(ui, "WinGet 核心", packages.winget_core.iter().map(|app| app.id.as_str()));
+                                            package_plan_row(ui, "WinGet 开发", packages.winget_dev.iter().map(|app| app.id.as_str()));
+                                            package_plan_row(ui, "Scoop", packages.scoop_tools.iter().map(String::as_str));
+                                            package_plan_row(ui, "Cargo", packages.cargo_packages.iter().map(String::as_str));
+                                            package_plan_row(ui, "NPM", packages.npm_globals.iter().map(String::as_str));
+                                            package_plan_row(ui, "Pip", packages.pip_packages.iter().map(String::as_str));
+                                            package_plan_row(ui, "UV", packages.uv_tools.iter().map(String::as_str));
+                                        });
+                                }
+                                Err(error) => {
+                                    ui.colored_label(DANGER, format!("计划无法执行：{error}"));
+                                }
+                            }
+                            if let Some(parity) = &parity {
+                                if !parity.manual.is_empty() {
+                                    egui::CollapsingHeader::new(format!("需手动处理 {} 项", parity.manual.len()))
+                                        .show(ui, |ui| {
+                                            for item in &parity.manual {
+                                                ui.label(item);
+                                            }
+                                        });
+                                }
+                            }
+                        });
+                        ui.add_space(14.0);
+                    }
 
                     card(ui, |ui| {
                         ui.label(
@@ -616,6 +781,13 @@ impl SetupApp {
                         ui.add_space(8.0);
                         match self.selected_target {
                             ExecutionTarget::FullSetup => {
+                                option(
+                                    ui,
+                                    &mut self.config.include_curated_extras,
+                                    "安装额外预设软件",
+                                    "默认关闭；开启后安装完整目录和 LTSC 常用商店应用",
+                                    self.run_state.active(),
+                                );
                                 ui.columns(2, |columns| {
                                     option(
                                         &mut columns[0],
@@ -683,6 +855,13 @@ impl SetupApp {
                                 });
                             }
                             ExecutionTarget::DevToolsOnly => {
+                                option(
+                                    ui,
+                                    &mut self.config.include_curated_extras,
+                                    "安装完整预设软件目录",
+                                    "默认仅补齐 Mac 清单中的工具",
+                                    self.run_state.active(),
+                                );
                                 ui.label(
                                     egui::RichText::new(
                                         "按依赖顺序先检查包管理器与镜像，再安装各语言工具。",
@@ -870,13 +1049,16 @@ impl SetupApp {
                                             self.cancel_setup();
                                         }
                                     } else {
-                                        let needs_admin = self.selected_target.requires_admin()
-                                            && !self.admin_status;
+                                        let needs_admin = (self.selected_target.requires_admin()
+                                            && !self.admin_status)
+                                            || self.inventory_error.is_some()
+                                            || self.inventory_rx.is_some()
+                                            || plan.is_err();
                                         let run = egui::Button::new(
                                             egui::RichText::new(if needs_admin {
                                                 "需要管理员权限"
                                             } else {
-                                                "开始部署"
+                                                "应用这份计划"
                                             })
                                                 .strong()
                                                 .color(TEXT),
@@ -964,10 +1146,16 @@ impl SetupApp {
 
 impl Drop for SetupApp {
     fn drop(&mut self) {
+        if let Some(cancellation) = &self.inventory_cancellation {
+            cancellation.cancel();
+        }
         if let Some(cancellation) = &self.cancellation {
             cancellation.cancel();
         }
         if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        if let Some(worker) = self.inventory_worker.take() {
             let _ = worker.join();
         }
     }
@@ -1063,6 +1251,18 @@ fn log_row(ui: &mut egui::Ui, log: &LogMessage) {
                 );
             });
         });
+}
+
+fn package_plan_row<'a>(ui: &mut egui::Ui, provider: &str, names: impl Iterator<Item = &'a str>) {
+    let names = names.collect::<Vec<_>>();
+    if !names.is_empty() {
+        ui.label(
+            egui::RichText::new(format!("{provider} · {} 项", names.len()))
+                .strong()
+                .color(TEXT),
+        );
+        ui.label(names.join("、"));
+    }
 }
 
 fn export_path(file_name: &str) -> PathBuf {

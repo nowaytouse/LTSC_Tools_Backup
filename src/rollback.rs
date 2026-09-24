@@ -24,6 +24,8 @@ pub struct RollbackJournal {
     pub created_at: String,
     pub profile_version: String,
     pub completed: bool,
+    #[serde(default)]
+    pub restored: bool,
     pub actions: Vec<RollbackAction>,
     #[serde(skip)]
     path: PathBuf,
@@ -40,6 +42,7 @@ impl RollbackJournal {
             created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             profile_version: profile_version.to_string(),
             completed: false,
+            restored: false,
             actions: Vec::new(),
             path,
         };
@@ -61,7 +64,7 @@ impl RollbackJournal {
         paths.sort();
         while let Some(path) = paths.pop() {
             let journal = Self::load(&path)?;
-            if !journal.actions.is_empty() {
+            if !journal.restored && !journal.actions.is_empty() {
                 return Ok(journal);
             }
         }
@@ -115,6 +118,11 @@ impl RollbackJournal {
         self.save()
     }
 
+    pub fn mark_restored(&mut self) -> anyhow::Result<()> {
+        self.restored = true;
+        self.save()
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -122,7 +130,7 @@ impl RollbackJournal {
     fn save(&self) -> anyhow::Result<()> {
         let temporary = self.path.with_extension("json.tmp");
         std::fs::write(&temporary, serde_json::to_vec_pretty(self)?)?;
-        replace_file(&temporary, &self.path)?;
+        std::fs::rename(&temporary, &self.path)?;
         Ok(())
     }
 }
@@ -134,14 +142,6 @@ pub fn journal_directory() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("LTSCWorkspace")
         .join("rollback")
-}
-
-fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    if target.exists() {
-        std::fs::remove_file(target)?;
-    }
-    std::fs::rename(source, target)
 }
 
 #[cfg(test)]
@@ -164,6 +164,7 @@ mod tests {
             created_at: "test".into(),
             profile_version: "test".into(),
             completed: false,
+            restored: false,
             actions: Vec::new(),
             path: path.clone(),
         };
@@ -187,6 +188,8 @@ mod tests {
         let loaded = RollbackJournal::load(&path).unwrap();
         assert!(loaded.completed);
         assert_eq!(loaded.actions, [first]);
+        journal.mark_restored().unwrap();
+        assert!(RollbackJournal::load(&path).unwrap().restored);
         let _ = std::fs::remove_file(path);
     }
 }

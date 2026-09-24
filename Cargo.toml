@@ -1,8 +1,8 @@
 [package]
 name = "ltsc_setup_gui"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
-authors = ["Antigravity AI"]
+authors = ["nowaytouse"]
 description = "Cancellable Rust-native Windows LTSC workstation deployer"
 
 [dependencies]
@@ -15,6 +15,8 @@ include_dir = "0.7"
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.36.1", default-features = false, features = ["accesskit", "default_fonts", "wgpu"] }
 winreg = "0.52"
+windows = { version = "0.62.2", features = ["Foundation", "Management_Deployment", "Win32_System_WinRT"] }
+windows-collections = "0.3.2"
 
 [build-dependencies]
 winresource = "0.1.31"

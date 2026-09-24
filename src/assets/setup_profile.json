@@ -1,19 +1,19 @@
 {
-  "profile_version": "2.1.0",
+  "profile_version": "2.2.0",
   "metadata": {
     "name": "macOS Host Environment Parity Profile for Windows LTSC",
     "author": "nowaytouse",
     "description": "Personal Windows LTSC profile synchronized from this Mac and executed by the cancellable Rust-native orchestrator.",
     "source_host_snapshot": {
-      "captured_at": "2026-08-24",
-      "homebrew_formulae": 103,
-      "homebrew_casks": 15,
+      "captured_at": "2026-09-25",
+      "homebrew_formulae": 110,
+      "homebrew_casks": 14,
       "policy": "Map verified Windows equivalents; skip macOS-only packages."
     },
     "provider_audit": {
-      "captured_at": "2026-08-24",
+      "captured_at": "2026-09-25",
       "winget_manifest_ids_verified": 34,
-      "scoop_manifests_verified": 83,
+      "scoop_manifests_verified": 88,
       "microsoft_store_product_ids_verified": 6,
       "policy": "Use exact IDs from official provider repositories; omit unavailable mappings."
     }
@@ -125,11 +125,11 @@
       "python", "nodejs-lts", "go", "zig", "deno", "fnm", "bun", "pnpm", "neovim", "mise", "zoxide",
       "cmake", "ninja", "nasm", "yasm", "sccache", "just", "mold", "gcc",
       "ripgrep", "fd", "fzf", "bat", "eza", "topgrade", "jdupes", "b3sum", "xxhash",
-      "actionlint", "shellcheck", "shfmt",
-      "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract",
+      "actionlint", "shellcheck", "shfmt", "doxygen", "grype", "osv-scanner",
+      "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract", "mpv",
       "apngasm", "czkawka", "dovi-tool", "gifsicle", "gifski", "git-filter-repo", "gpac", "helm", "jhead",
       "lychee", "mediainfo", "meson", "pandoc", "pipx", "pngquant", "pyenv", "ruby", "taplo", "tealdeer", "volta",
-      "aria2", "wget", "lz4", "zstd", "xz", "brotli", "sqlite", "postgresql",
+      "aria2", "wget", "lz4", "zstd", "xz", "brotli", "sqlite", "postgresql", "uv",
       "krew", "uutils-coreutils", "libvips",
       "sing-box", "mihomo", "nextdns",
       "ollama", "whisper-cpp"
@@ -148,17 +148,17 @@
       "acp-ts", "context-mode", "lodash", "openclaw", "opencode-ai",
       "pyright", "run-deepseek-cli", "typescript", "typescript-language-server",
       "uipro-cli", "prettier", "markdownlint-cli2", "node-gyp", "npm",
-      "@openai/codex", "repomix"
+      "@openai/codex", "repomix", "@moonshot-ai/kimi-code", "@kilocode/cli"
     ],
     "pip_packages": [
       "buku",
       "flask", "flask-cors", "numpy", "scipy", "scikit-learn", "pillow",
       "opencv-python", "torch", "lightgbm", "openvino", "tqdm", "joblib",
       "sympy", "networkx", "PyWavelets", "certifi", "cryptography", "filelock", "fsspec",
-      "ruff", "pyupgrade", "docutils"
+      "ruff", "pyupgrade", "docutils", "asciidoc", "setuptools", "sphinx"
     ],
     "uv_tools": [
-      "kimi-cli", "ruff"
+      "ruff", "serena-agent"
     ]
   },
   "system_tweaks": {
@@ -184,8 +184,8 @@
   },
   "windows_features": {
     "enable_wsl2": true,
-    "enable_netfx3": true,
-    "enable_windows_sandbox": true,
+    "enable_netfx3": false,
+    "enable_windows_sandbox": false,
     "enable_hyper_v": false
   },
   "ollama_models": [

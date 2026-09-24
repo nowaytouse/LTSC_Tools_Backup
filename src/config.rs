@@ -33,8 +33,8 @@ pub enum ExecutionTarget {
 
 impl ExecutionTarget {
     pub const ALL: [Self; 9] = [
-        Self::FullSetup,
         Self::DevToolsOnly,
+        Self::FullSetup,
         Self::NetworkOnly,
         Self::StorageOnly,
         Self::WindowsFeaturesOnly,
@@ -47,7 +47,7 @@ impl ExecutionTarget {
     pub fn label(self) -> &'static str {
         match self {
             Self::FullSetup => "完整部署",
-            Self::DevToolsOnly => "开发工具",
+            Self::DevToolsOnly => "同步 Mac 工具",
             Self::NetworkOnly => "网络优化",
             Self::StorageOnly => "存储优化",
             Self::WindowsFeaturesOnly => "Windows 功能",
@@ -61,7 +61,7 @@ impl ExecutionTarget {
     pub fn description(self) -> &'static str {
         match self {
             Self::FullSetup => "按依赖顺序部署软件、开发环境和系统设置",
-            Self::DevToolsOnly => "同步 WinGet、Scoop、Cargo、NPM 与 Python 工具",
+            Self::DevToolsOnly => "按 Mac 清单补齐 Windows 软件与开发工具",
             Self::NetworkOnly => "保存原配置后刷新 DNS 并应用选定的 TCP 设置",
             Self::StorageOnly => "启用 TRIM，并按 SSD/HDD 介质类型执行 Windows 官方优化",
             Self::WindowsFeaturesOnly => "按能力检测启用 WSL2、.NET 3.5、Sandbox 等可选功能",
@@ -218,6 +218,7 @@ impl SetupProfile {
     }
 
     pub fn parity_report(&self, inventory: &MacosInventory) -> anyhow::Result<ParityReport> {
+        inventory.validate()?;
         let rules = ParityRules::load_embedded()?;
         rules.validate()?;
         let mut report = ParityReport::default();
@@ -240,6 +241,176 @@ impl SetupProfile {
         Ok(report)
     }
 
+    pub fn packages_for_inventory(
+        &self,
+        inventory: &MacosInventory,
+    ) -> anyhow::Result<PackageMatrixConfig> {
+        let report = self.parity_report(inventory)?;
+        if !report.unmapped.is_empty() {
+            anyhow::bail!("Mac 工具尚无可执行映射：{}", report.unmapped.join("；"));
+        }
+        let rules = ParityRules::load_embedded()?;
+        let mut selected = std::collections::BTreeSet::new();
+        for (kind, values) in [
+            (SourceKind::Formula, &inventory.homebrew_formulae),
+            (SourceKind::Cask, &inventory.homebrew_casks),
+            (SourceKind::Cargo, &inventory.cargo_packages),
+            (SourceKind::Npm, &inventory.npm_globals),
+            (SourceKind::Uv, &inventory.uv_tools),
+        ] {
+            for source in values {
+                let package = match rules.find(kind, source) {
+                    Some(rule) if rule.provider == ParityProvider::Alternative => {
+                        self.find_package(&rule.target, kind)
+                    }
+                    Some(rule) => self
+                        .canonical_package(rule.provider, &rule.target)
+                        .map(|target| (rule.provider, target)),
+                    None => self.find_package(source, kind),
+                };
+                if let Some((provider, target)) = package {
+                    selected.insert(package_key(provider, &target));
+                }
+            }
+        }
+
+        // Runtime providers are part of the plan, even when they are absent on a fresh LTSC.
+        if selected.iter().any(|key| key.starts_with("Cargo:")) {
+            selected.insert(package_key(ParityProvider::Winget, "Rustlang.Rustup"));
+        }
+        if selected.iter().any(|key| key.starts_with("Npm:")) {
+            selected.insert(package_key(ParityProvider::Scoop, "nodejs-lts"));
+        }
+        if selected.iter().any(|key| key.starts_with("Pip:")) {
+            selected.insert(package_key(ParityProvider::Scoop, "python"));
+        }
+        if selected.iter().any(|key| key.starts_with("Uv:")) {
+            selected.insert(package_key(ParityProvider::Scoop, "uv"));
+        }
+        if selected.iter().any(|key| key.starts_with("Scoop:")) {
+            selected.insert(package_key(ParityProvider::Winget, "Git.Git"));
+        }
+
+        let packages = &self.packages;
+        let selected_strings = |provider, values: &Vec<String>| {
+            values
+                .iter()
+                .filter(|value| selected.contains(&package_key(provider, value)))
+                .cloned()
+                .collect()
+        };
+        let selected_winget = |apps: &Vec<WingetApp>| {
+            apps.iter()
+                .filter(|app| selected.contains(&package_key(ParityProvider::Winget, &app.id)))
+                .cloned()
+                .collect()
+        };
+        let result = PackageMatrixConfig {
+            winget_core: selected_winget(&packages.winget_core),
+            winget_dev: selected_winget(&packages.winget_dev),
+            scoop_tools: selected_strings(ParityProvider::Scoop, &packages.scoop_tools),
+            cargo_packages: selected_strings(ParityProvider::Cargo, &packages.cargo_packages),
+            npm_globals: selected_strings(ParityProvider::Npm, &packages.npm_globals),
+            pip_packages: selected_strings(ParityProvider::Pip, &packages.pip_packages),
+            uv_tools: selected_strings(ParityProvider::Uv, &packages.uv_tools),
+        };
+        for required in [
+            (ParityProvider::Winget, "Rustlang.Rustup"),
+            (ParityProvider::Winget, "Git.Git"),
+            (ParityProvider::Scoop, "nodejs-lts"),
+            (ParityProvider::Scoop, "python"),
+            (ParityProvider::Scoop, "uv"),
+        ] {
+            if selected.contains(&package_key(required.0, required.1))
+                && !self.rule_target_exists(&ParityRule {
+                    source_kind: SourceKind::Formula,
+                    source: String::new(),
+                    provider: required.0,
+                    target: required.1.into(),
+                    reason: String::new(),
+                })
+            {
+                anyhow::bail!("缺少运行时依赖包：{}", required.1);
+            }
+        }
+        Ok(result)
+    }
+
+    fn find_package(&self, name: &str, kind: SourceKind) -> Option<(ParityProvider, String)> {
+        let preferred = match kind {
+            SourceKind::Formula => [
+                ParityProvider::Scoop,
+                ParityProvider::Winget,
+                ParityProvider::Cargo,
+                ParityProvider::Npm,
+                ParityProvider::Pip,
+                ParityProvider::Uv,
+            ],
+            SourceKind::Cask => [
+                ParityProvider::Winget,
+                ParityProvider::Scoop,
+                ParityProvider::Npm,
+                ParityProvider::Cargo,
+                ParityProvider::Pip,
+                ParityProvider::Uv,
+            ],
+            SourceKind::Cargo => [
+                ParityProvider::Cargo,
+                ParityProvider::Scoop,
+                ParityProvider::Winget,
+                ParityProvider::Npm,
+                ParityProvider::Pip,
+                ParityProvider::Uv,
+            ],
+            SourceKind::Npm => [
+                ParityProvider::Npm,
+                ParityProvider::Scoop,
+                ParityProvider::Winget,
+                ParityProvider::Cargo,
+                ParityProvider::Pip,
+                ParityProvider::Uv,
+            ],
+            SourceKind::Uv => [
+                ParityProvider::Uv,
+                ParityProvider::Scoop,
+                ParityProvider::Winget,
+                ParityProvider::Cargo,
+                ParityProvider::Npm,
+                ParityProvider::Pip,
+            ],
+        };
+        preferred.into_iter().find_map(|provider| {
+            self.canonical_package(provider, name)
+                .map(|target| (provider, target))
+        })
+    }
+
+    fn canonical_package(&self, provider: ParityProvider, name: &str) -> Option<String> {
+        match provider {
+            ParityProvider::Winget => self
+                .packages
+                .winget_core
+                .iter()
+                .chain(&self.packages.winget_dev)
+                .find(|app| {
+                    app.id.eq_ignore_ascii_case(name)
+                        || app.name.eq_ignore_ascii_case(name)
+                        || app
+                            .id
+                            .rsplit('.')
+                            .next()
+                            .is_some_and(|tail| tail.eq_ignore_ascii_case(name))
+                })
+                .map(|app| app.id.clone()),
+            ParityProvider::Scoop => canonical_string(&self.packages.scoop_tools, name),
+            ParityProvider::Cargo => canonical_string(&self.packages.cargo_packages, name),
+            ParityProvider::Npm => canonical_string(&self.packages.npm_globals, name),
+            ParityProvider::Pip => canonical_string(&self.packages.pip_packages, name),
+            ParityProvider::Uv => canonical_string(&self.packages.uv_tools, name),
+            _ => None,
+        }
+    }
+
     fn classify_parity(
         &self,
         rules: &ParityRules,
@@ -252,7 +423,7 @@ impl SetupProfile {
             return;
         }
 
-        let Some(rule) = rules.find(source_kind.clone(), source) else {
+        let Some(rule) = rules.find(source_kind, source) else {
             report.unmapped.push(format!("{source_kind:?}:{source}"));
             return;
         };
@@ -282,7 +453,11 @@ impl SetupProfile {
                     ));
                 }
             }
-            ParityProvider::WindowsBuiltIn | ParityProvider::Wsl => report.compatible += 1,
+            ParityProvider::WindowsBuiltIn => report.compatible += 1,
+            ParityProvider::Wsl => report.manual.push(format!(
+                "{source_kind:?}:{source} -> WSL:{}（需在 WSL 中另行安装）",
+                rule.target
+            )),
             ParityProvider::MacOnly => report.mac_only += 1,
             ParityProvider::Manual => report.manual.push(format!(
                 "{source_kind:?}:{source} -> {}（{}）",
@@ -353,6 +528,17 @@ fn contains_ci(values: &[String], needle: &str) -> bool {
         .any(|value| value.eq_ignore_ascii_case(needle))
 }
 
+fn canonical_string(values: &[String], needle: &str) -> Option<String> {
+    values
+        .iter()
+        .find(|value| value.eq_ignore_ascii_case(needle))
+        .cloned()
+}
+
+fn package_key(provider: ParityProvider, target: &str) -> String {
+    format!("{provider:?}:{}", target.to_ascii_lowercase())
+}
+
 fn validate_winget_apps(label: &str, apps: &[WingetApp]) -> anyhow::Result<()> {
     let mut ids = std::collections::BTreeSet::new();
     for app in apps {
@@ -394,6 +580,7 @@ fn validate_unique_strings(label: &str, values: &[String]) -> anyhow::Result<()>
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetupConfig {
+    pub include_curated_extras: bool,
     pub include_dev_tools: bool,
     pub include_agent_skills: bool,
     pub include_docker_wsl: bool,
@@ -412,20 +599,37 @@ pub struct SetupConfig {
 impl Default for SetupConfig {
     fn default() -> Self {
         Self {
+            include_curated_extras: false,
             include_dev_tools: true,
-            include_agent_skills: true,
+            include_agent_skills: false,
             include_docker_wsl: true,
-            include_storage_optimization: true,
-            include_deep_win_tweaks: true,
-            include_git_shell_configs: true,
-            include_vscode_extensions: true,
-            include_npmrc_config: true,
-            include_ollama_models: true,
-            network_mode: NetworkMode::Optimized,
-            target_mode: ExecutionTarget::FullSetup,
+            include_storage_optimization: false,
+            include_deep_win_tweaks: false,
+            include_git_shell_configs: false,
+            include_vscode_extensions: false,
+            include_npmrc_config: false,
+            include_ollama_models: false,
+            network_mode: NetworkMode::Basic,
+            target_mode: ExecutionTarget::DevToolsOnly,
             profile: SetupProfile::load_default(),
             source_inventory: MacosInventory::load_embedded().unwrap_or_default(),
         }
+    }
+}
+
+impl SetupConfig {
+    pub fn resolved(&self) -> anyhow::Result<Self> {
+        let mut result = self.clone();
+        if matches!(
+            self.target_mode,
+            ExecutionTarget::FullSetup | ExecutionTarget::DevToolsOnly
+        ) && !self.include_curated_extras
+        {
+            result.profile.packages = self
+                .profile
+                .packages_for_inventory(&self.source_inventory)?;
+        }
+        Ok(result)
     }
 }
 
@@ -471,5 +675,56 @@ mod tests {
             report.unmapped
         );
         assert_eq!(report.covered(), inventory.item_count());
+    }
+
+    #[test]
+    fn source_plan_installs_mapped_tools_without_unrelated_catalog_apps() {
+        let mut profile = SetupProfile::load_default();
+        let inventory = crate::inventory::MacosInventory::load_embedded().unwrap();
+        profile.packages = profile.packages_for_inventory(&inventory).unwrap();
+        assert!(profile
+            .parity_report(&inventory)
+            .unwrap()
+            .unmapped
+            .is_empty());
+        assert!(profile
+            .packages
+            .winget_dev
+            .iter()
+            .any(|app| app.id == "Git.Git"));
+        assert!(profile.packages.scoop_tools.iter().any(|name| name == "uv"));
+        assert!(profile
+            .packages
+            .npm_globals
+            .iter()
+            .any(|name| name == "@moonshot-ai/kimi-code"));
+        assert!(profile
+            .packages
+            .uv_tools
+            .iter()
+            .any(|name| name == "serena-agent"));
+        assert!(!profile
+            .packages
+            .winget_dev
+            .iter()
+            .any(|app| app.id == "Valve.Steam"));
+        assert!(
+            profile.packages.npm_globals.len()
+                < SetupProfile::load_default().packages.npm_globals.len()
+        );
+    }
+
+    #[test]
+    fn wsl_equivalents_are_not_counted_as_installed() {
+        let profile = SetupProfile::load_default();
+        let mut inventory = crate::inventory::MacosInventory::load_embedded().unwrap();
+        inventory.homebrew_formulae = vec!["fish".into()];
+        inventory.homebrew_casks.clear();
+        inventory.cargo_packages.clear();
+        inventory.npm_globals.clear();
+        inventory.uv_tools.clear();
+        let report = profile.parity_report(&inventory).unwrap();
+        assert_eq!(report.compatible, 0);
+        assert_eq!(report.manual.len(), 1);
     }
 }

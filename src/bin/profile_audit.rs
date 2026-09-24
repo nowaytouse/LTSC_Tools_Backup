@@ -155,7 +155,7 @@ fn run_http_checks(checks: Vec<HttpCheck>, workers: usize) -> Vec<String> {
                         "--retry-delay",
                         "1",
                         "--user-agent",
-                        "LTSCWorkspace/2.1 (+https://github.com/nowaytouse/LTSC_Tools_Backup)",
+                        "LTSCWorkspace/2.2 (+https://github.com/nowaytouse/LTSC_Tools_Backup)",
                         "--max-time",
                         "20",
                         "--output",

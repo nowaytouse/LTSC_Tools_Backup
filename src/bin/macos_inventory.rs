@@ -1,5 +1,9 @@
 #[cfg(target_os = "macos")]
 #[allow(dead_code)]
+#[path = "../config.rs"]
+mod config;
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
 #[path = "../inventory.rs"]
 mod inventory;
 #[cfg(target_os = "macos")]
@@ -8,17 +12,83 @@ mod inventory;
 mod utils;
 
 #[cfg(target_os = "macos")]
+use config::SetupProfile;
+#[cfg(target_os = "macos")]
 use inventory::MacosInventory;
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use utils::{run_native_cmd_timeout, CancellationToken};
 
 #[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
-    let output = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("src/assets/macos_inventory.json"));
-    let inventory = MacosInventory::capture()?;
+    let argument = std::env::args_os().nth(1);
+    let sync = argument.as_deref() == Some(std::ffi::OsStr::new("--sync"));
+    if sync {
+        let root = git(&["rev-parse", "--show-toplevel"])?;
+        std::env::set_current_dir(root.trim())?;
+    }
+    let output = if sync {
+        PathBuf::from("src/assets/macos_inventory.json")
+    } else {
+        argument
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("src/assets/macos_inventory.json"))
+    };
+    if sync {
+        let status = git(&["status", "--porcelain=v1", "--untracked-files=all"])?;
+        if !status.trim().is_empty() {
+            anyhow::bail!("工作区有未提交改动；请先处理这些改动，再运行 --sync");
+        }
+        git(&["pull", "--ff-only"])?;
+    }
+    let mut inventory = MacosInventory::capture()?;
+    if sync {
+        let previous = MacosInventory::load_file(&output)?;
+        if inventory
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("VS Code extensions 未采集"))
+        {
+            inventory.vscode_extensions = previous.vscode_extensions;
+        }
+        if inventory
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("Cursor extensions 未采集"))
+        {
+            inventory.cursor_extensions = previous.cursor_extensions;
+        }
+    }
+    inventory.validate()?;
+    let report = SetupProfile::load_default().parity_report(&inventory)?;
+    if sync {
+        let failed_capture = inventory
+            .warnings
+            .iter()
+            .filter(|warning| {
+                (warning.contains("未采集") || warning.contains("解析失败"))
+                    && !warning.starts_with("VS Code extensions 未采集")
+                    && !warning.starts_with("Cursor extensions 未采集")
+            })
+            .collect::<Vec<_>>();
+        if !failed_capture.is_empty() {
+            anyhow::bail!(
+                "采集不完整，未发布清单：{}",
+                failed_capture
+                    .iter()
+                    .map(|warning| warning.as_str())
+                    .collect::<Vec<_>>()
+                    .join("；")
+            );
+        }
+        if !report.unmapped.is_empty() {
+            anyhow::bail!(
+                "新工具尚未建立 Windows 映射，未发布清单：{}",
+                report.unmapped.join("；")
+            );
+        }
+    }
     inventory.save_atomic(&output)?;
     println!(
         "已写入 {}：{} 个工具，{} 条采集警告",
@@ -26,7 +96,55 @@ fn main() -> anyhow::Result<()> {
         inventory.item_count(),
         inventory.warnings.len()
     );
+    println!(
+        "Windows 对等：{} 自动、{} 内置/替代、{} Mac 专属、{} 待手动、{} 未映射",
+        report.automatic,
+        report.compatible,
+        report.mac_only,
+        report.manual.len(),
+        report.unmapped.len()
+    );
+    if !report.unmapped.is_empty() {
+        eprintln!("未映射：{}", report.unmapped.join("；"));
+    }
+    if sync {
+        let status = git(&[
+            "status",
+            "--porcelain=v1",
+            "--",
+            "src/assets/macos_inventory.json",
+        ])?;
+        if !status.trim().is_empty() {
+            git(&[
+                "commit",
+                "--only",
+                "-m",
+                "chore: refresh Mac tool inventory",
+                "--",
+                "src/assets/macos_inventory.json",
+            ])?;
+            git(&["push"])?;
+        }
+        let status = git(&["status", "--porcelain=v1", "--untracked-files=all"])?;
+        if !status.trim().is_empty() {
+            anyhow::bail!("清单已处理，但工作区仍有改动：{status}");
+        }
+        let ahead_behind = git(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])?;
+        if ahead_behind.split_whitespace().collect::<Vec<_>>() != ["0", "0"] {
+            anyhow::bail!("远端尚未与本机同步：{ahead_behind}");
+        }
+        println!("Mac 清单已与远端同步；工作区干净");
+    }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn git(args: &[&str]) -> anyhow::Result<String> {
+    let result = run_native_cmd_timeout("git", args, 120, &CancellationToken::default());
+    if !result.succeeded() {
+        anyhow::bail!("git {} 失败：{}", args.join(" "), result.diagnostic());
+    }
+    Ok(result.output)
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -23,6 +23,9 @@ mod rollback;
 #[cfg(any(target_os = "windows", test))]
 #[cfg_attr(all(not(target_os = "windows"), test), allow(dead_code))]
 mod utils;
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(all(not(target_os = "windows"), test), allow(dead_code))]
+mod winget_bootstrap;
 
 #[cfg(target_os = "windows")]
 use app::SetupApp;

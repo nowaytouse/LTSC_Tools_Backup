@@ -2,8 +2,7 @@
 use crate::utils::{run_native_cmd_timeout, CancellationToken};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-#[cfg(target_os = "macos")]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MacosInventory {
@@ -20,7 +19,7 @@ pub struct MacosInventory {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Formula,
@@ -30,7 +29,7 @@ pub enum SourceKind {
     Uv,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ParityProvider {
     Winget,
@@ -110,6 +109,102 @@ impl MacosInventory {
         ))?)
     }
 
+    pub fn load_file(path: &Path) -> anyhow::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        if bytes.len() > 1_048_576 {
+            anyhow::bail!("Mac 清单超过 1 MiB：{}", path.display());
+        }
+        let inventory: Self = serde_json::from_slice(&bytes)?;
+        inventory.validate()?;
+        Ok(inventory)
+    }
+
+    pub fn cache_path() -> PathBuf {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("LTSCWorkspace")
+            .join("macos_inventory.json")
+    }
+
+    pub fn load_cached_or_embedded() -> anyhow::Result<Self> {
+        let path = Self::cache_path();
+        if path.exists() {
+            Self::load_file(&path)
+        } else {
+            let inventory = Self::load_embedded()?;
+            inventory.validate()?;
+            Ok(inventory)
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.schema_version != 1 || self.item_count() == 0 {
+            anyhow::bail!("Mac 清单版本无效或没有工具项目");
+        }
+        for (label, values) in [
+            ("formula", &self.homebrew_formulae),
+            ("cask", &self.homebrew_casks),
+            ("Cargo", &self.cargo_packages),
+            ("NPM", &self.npm_globals),
+            ("UV", &self.uv_tools),
+        ] {
+            let mut seen = BTreeSet::new();
+            for value in values {
+                if value.is_empty()
+                    || value.len() > 256
+                    || (matches!(label, "formula" | "cask") && value.contains('/'))
+                    || value
+                        .chars()
+                        .any(|ch| ch.is_control() || ch.is_whitespace())
+                    || !seen.insert(value.to_ascii_lowercase())
+                {
+                    anyhow::bail!("Mac 清单中的 {label} 项无效或重复：{value}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn fetch_latest(cancellation: &crate::utils::CancellationToken) -> anyhow::Result<Self> {
+        const URL: &str = "https://raw.githubusercontent.com/nowaytouse/LTSC_Tools_Backup/main/src/assets/macos_inventory.json";
+        let destination = Self::cache_path();
+        std::fs::create_dir_all(destination.parent().expect("cache has parent"))?;
+        let download = destination.with_extension(format!("{}.download", std::process::id()));
+        let output = download.to_string_lossy().into_owned();
+        let result = crate::utils::run_native_cmd_timeout(
+            "curl.exe",
+            &[
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                "45",
+                "--max-filesize",
+                "1048576",
+                URL,
+                "--output",
+                &output,
+            ],
+            55,
+            cancellation,
+        );
+        if !result.succeeded() {
+            let _ = std::fs::remove_file(&download);
+            anyhow::bail!("Mac 清单下载失败：{}", result.diagnostic());
+        }
+        let inventory = Self::load_file(&download);
+        let _ = std::fs::remove_file(&download);
+        let inventory = inventory?;
+        let data = serde_json::to_vec_pretty(&inventory)?;
+        let temporary = destination.with_extension("json.tmp");
+        std::fs::write(&temporary, data)?;
+        std::fs::rename(temporary, destination)?;
+        Ok(inventory)
+    }
+
     #[cfg(target_os = "macos")]
     pub fn capture() -> anyhow::Result<Self> {
         let cancellation = CancellationToken::default();
@@ -120,21 +215,25 @@ impl MacosInventory {
         };
 
         inventory.homebrew_formulae =
-            required_lines("Homebrew formulae", "brew", &["leaves"], &cancellation)?;
+            required_lines("Homebrew formulae", "brew", &["leaves"], &cancellation)?
+                .into_iter()
+                .map(|name| name.rsplit('/').next().unwrap_or(&name).to_string())
+                .collect();
         inventory.homebrew_casks = optional_lines(
             "Homebrew casks",
             "brew",
             &["list", "--cask"],
             &cancellation,
             &mut inventory.warnings,
-        );
-        // Tap names can disclose personal/private repository namespaces and are
-        // not installation targets on Windows. Keep the public snapshot useful
-        // for parity without publishing source-account metadata.
+        )
+        .into_iter()
+        .map(|name| name.rsplit('/').next().unwrap_or(&name).to_string())
+        .collect();
+        // Tap names and tap-qualified formula names can disclose private namespaces.
         inventory.homebrew_taps.clear();
         inventory
             .warnings
-            .push("Homebrew taps 未写入公开快照；Windows parity 仅使用 formula/cask 名称".into());
+            .push("Homebrew tap 名称/前缀未写入公开快照；仅保留 formula/cask 名称".into());
 
         let cargo_output = optional_output(
             "Cargo tools",
@@ -356,6 +455,7 @@ mod tests {
     #[test]
     fn embedded_inventory_is_valid_and_private() {
         let inventory = MacosInventory::load_embedded().unwrap();
+        inventory.validate().unwrap();
         assert_eq!(inventory.schema_version, 1);
         assert!(!inventory.captured_at.is_empty());
         assert!(!inventory.homebrew_formulae.is_empty());
@@ -363,6 +463,18 @@ mod tests {
         assert!(!serialized.contains("/Users/"));
         assert!(!serialized.contains("hostname"));
         assert!(inventory.homebrew_taps.is_empty());
+    }
+
+    #[test]
+    fn invalid_inventory_cannot_replace_the_deployment_plan() {
+        let mut inventory = MacosInventory::load_embedded().unwrap();
+        inventory
+            .homebrew_formulae
+            .push(inventory.homebrew_formulae[0].clone());
+        assert!(inventory.validate().is_err());
+        inventory.homebrew_formulae.pop();
+        inventory.homebrew_formulae.push("private/tap/tool".into());
+        assert!(inventory.validate().is_err());
     }
 
     #[test]
