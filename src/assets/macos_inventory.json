@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-24T16:28:31Z",
+  "captured_at": "2026-09-27T02:47:42Z",
   "homebrew_formulae": [
     "actionlint",
     "apngasm",
@@ -67,7 +67,6 @@
     "neovim",
     "nextdns",
     "ollama",
-    "openapv",
     "opencv",
     "openjdk",
     "osv-scanner",
