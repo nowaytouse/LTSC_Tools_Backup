@@ -129,13 +129,24 @@ impl MacosInventory {
 
     pub fn load_cached_or_embedded() -> anyhow::Result<Self> {
         let path = Self::cache_path();
-        if path.exists() {
+        let inventory = if path.exists() {
             Self::load_file(&path)
         } else {
             let inventory = Self::load_embedded()?;
             inventory.validate()?;
             Ok(inventory)
-        }
+        }?;
+        inventory.ensure_supported()?;
+        Ok(inventory)
+    }
+
+    fn ensure_supported(&self) -> anyhow::Result<()> {
+        crate::config::SetupProfile::load_default()
+            .packages_for_inventory(self)
+            .map(|_| ())
+            .map_err(|error| {
+                anyhow::anyhow!("当前 Windows 程序无法部署这份 Mac 清单，请先更新程序：{error}")
+            })
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -195,13 +206,16 @@ impl MacosInventory {
             let _ = std::fs::remove_file(&download);
             anyhow::bail!("Mac 清单下载失败：{}", result.diagnostic());
         }
-        let inventory = Self::load_file(&download);
+        let inventory = Self::adopt_downloaded(&download, &destination);
         let _ = std::fs::remove_file(&download);
-        let inventory = inventory?;
-        let data = serde_json::to_vec_pretty(&inventory)?;
-        let temporary = destination.with_extension("json.tmp");
-        std::fs::write(&temporary, data)?;
-        std::fs::rename(temporary, destination)?;
+        inventory
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    fn adopt_downloaded(download: &Path, destination: &Path) -> anyhow::Result<Self> {
+        let inventory = Self::load_file(download)?;
+        inventory.ensure_supported()?;
+        inventory.save_atomic(destination)?;
         Ok(inventory)
     }
 
@@ -286,7 +300,6 @@ impl MacosInventory {
         Ok(inventory)
     }
 
-    #[cfg(target_os = "macos")]
     pub fn save_atomic(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -475,6 +488,42 @@ mod tests {
         inventory.homebrew_formulae.pop();
         inventory.homebrew_formulae.push("private/tap/tool".into());
         assert!(inventory.validate().is_err());
+    }
+
+    #[test]
+    fn unmapped_download_keeps_the_last_usable_cache() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ltsc-inventory-cache-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let destination = root.join("macos_inventory.json");
+        let download = root.join("download.json");
+        let current = MacosInventory::load_embedded().unwrap();
+        current.save_atomic(&destination).unwrap();
+        let previous_bytes = std::fs::read(&destination).unwrap();
+
+        let mut incompatible = current.clone();
+        incompatible
+            .homebrew_formulae
+            .push("ltsc-unmapped-sentinel".into());
+        incompatible.save_atomic(&download).unwrap();
+        assert!(MacosInventory::adopt_downloaded(&download, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), previous_bytes);
+
+        let mut compatible = current;
+        compatible.captured_at = "2026-09-27T00:00:00Z".into();
+        compatible.save_atomic(&download).unwrap();
+        assert_eq!(
+            MacosInventory::adopt_downloaded(&download, &destination).unwrap(),
+            compatible
+        );
+        assert_eq!(MacosInventory::load_file(&destination).unwrap(), compatible);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
