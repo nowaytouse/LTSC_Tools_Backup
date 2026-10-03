@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - 2026-10-03
+
+- 默认 Mac 工具清单在 GitHub Raw 请求失败或响应无效时自动改用 GitHub Contents API；默认来源请求有界等待并仅允许 HTTPS 重定向。
+- 支持独占使用自定义 HTTPS 清单来源，以及按相同校验规则导入不超过 1 MiB 的本地 JSON；导入/下载失败或取消时保留最后一份有效缓存。
+- 清单更新可在 GUI 中取消或恢复默认地址；新增原始来源不可达、无效内容、映射不兼容、备用源失败和取消的回归测试。此条目尚未发布到仓库内的 Windows 可执行文件。
+
 ## 2.1.0 - 2026-08-24
 
 - 将 GUI 限定为 Windows 原生构建，关闭 eframe 的 Web/X11/Wayland 默认功能，并内置 UAC 管理员 manifest。

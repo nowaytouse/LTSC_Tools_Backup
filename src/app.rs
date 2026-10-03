@@ -1,6 +1,6 @@
 use crate::config::{ExecutionTarget, NetworkMode, SetupConfig, SetupProfile};
 use crate::installer::{run_setup_worker, SetupEvent, SetupOutcome, SetupSummary};
-use crate::inventory::MacosInventory;
+use crate::inventory::{MacosInventory, DEFAULT_INVENTORY_URL};
 use crate::utils::{is_admin, CancellationToken, LogLevel, LogMessage};
 use eframe::egui;
 use std::path::PathBuf;
@@ -67,6 +67,8 @@ pub struct SetupApp {
     inventory_worker: Option<thread::JoinHandle<()>>,
     inventory_cancellation: Option<CancellationToken>,
     inventory_error: Option<String>,
+    inventory_source_url: String,
+    inventory_file_path: String,
     admin_status: bool,
     json_editor_text: String,
     show_json_editor: bool,
@@ -159,6 +161,7 @@ impl Default for SetupApp {
                 )),
             },
         };
+        let (inventory_source_url, source_url_warning) = load_inventory_source_url();
         let json_editor_text = serde_json::to_string_pretty(&config.profile).unwrap_or_default();
         let parity_message = config
             .profile
@@ -182,6 +185,9 @@ impl Default for SetupApp {
         if let Some(warning) = inventory_warning {
             logs.push(LogMessage::new(LogLevel::Warn, warning));
         }
+        if let Some(warning) = source_url_warning {
+            logs.push(LogMessage::new(LogLevel::Warn, warning));
+        }
         Self {
             config,
             selected_target: ExecutionTarget::DevToolsOnly,
@@ -195,6 +201,8 @@ impl Default for SetupApp {
             inventory_worker: None,
             inventory_cancellation: None,
             inventory_error,
+            inventory_source_url,
+            inventory_file_path: String::new(),
             admin_status: is_admin(),
             json_editor_text,
             show_json_editor: false,
@@ -212,7 +220,7 @@ impl SetupApp {
     }
 
     fn start_setup(&mut self) {
-        if self.run_state.active() {
+        if self.run_state.active() || self.inventory_rx.is_some() {
             return;
         }
         if let Some(error) = &self.inventory_error {
@@ -255,17 +263,62 @@ impl SetupApp {
         if self.run_state.active() || self.inventory_rx.is_some() {
             return;
         }
+        let url = self.inventory_source_url.trim().to_string();
+        if let Err(error) = MacosInventory::validate_inventory_url(&url) {
+            self.push_log(LogLevel::Error, format!("清单地址无效：{error}"));
+            return;
+        }
+        let source_path = MacosInventory::source_url_path();
+        let Some(parent) = source_path.parent() else {
+            self.push_log(LogLevel::Error, "无法确定清单地址配置目录");
+            return;
+        };
+        if let Err(error) =
+            std::fs::create_dir_all(parent).and_then(|()| std::fs::write(&source_path, &url))
+        {
+            self.push_log(LogLevel::Error, format!("无法保存清单地址配置：{error}"));
+            return;
+        }
         let (tx, rx) = channel();
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
+        let using_default = url == DEFAULT_INVENTORY_URL;
         self.inventory_rx = Some(rx);
         self.inventory_cancellation = Some(cancellation);
         self.inventory_worker = Some(thread::spawn(move || {
-            let result = MacosInventory::fetch_latest(&worker_cancellation)
+            let result = MacosInventory::fetch_from_url(&url, &worker_cancellation)
                 .map_err(|error| error.to_string());
             let _ = tx.send(result);
         }));
-        self.push_log(LogLevel::Info, "正在从仓库更新 Mac 工具清单…");
+        self.push_log(
+            LogLevel::Info,
+            if using_default {
+                "正在更新 Mac 工具清单；GitHub Raw 不可用时将尝试官方 API…"
+            } else {
+                "正在从自定义 HTTPS 地址更新 Mac 工具清单…"
+            },
+        );
+    }
+
+    fn import_inventory_file(&mut self) {
+        if self.run_state.active() || self.inventory_rx.is_some() {
+            return;
+        }
+        let source = PathBuf::from(self.inventory_file_path.trim());
+        if source.as_os_str().is_empty() {
+            self.push_log(LogLevel::Error, "请先填写本地清单 JSON 文件路径");
+            return;
+        }
+        let destination = MacosInventory::cache_path();
+        let source_label = source.display().to_string();
+        let (tx, rx) = channel();
+        self.inventory_rx = Some(rx);
+        self.inventory_worker = Some(thread::spawn(move || {
+            let result = MacosInventory::adopt_file(&source, &destination)
+                .map_err(|error| format!("本地清单导入失败：{error}"));
+            let _ = tx.send(result);
+        }));
+        self.push_log(LogLevel::Info, format!("正在导入本地清单：{source_label}"));
     }
 
     fn cancel_setup(&mut self) {
@@ -524,19 +577,65 @@ impl SetupApp {
                             .size(11.0)
                             .color(MUTED),
                         );
+                        ui.label(
+                            egui::RichText::new(
+                                "默认：Raw → 官方 API；均不可用时可导入本地 JSON。",
+                            )
+                            .size(11.0)
+                            .color(MUTED),
+                        );
+                        ui.add_enabled(
+                            !self.run_state.active() && self.inventory_rx.is_none(),
+                            egui::TextEdit::singleline(&mut self.inventory_source_url)
+                                .hint_text(DEFAULT_INVENTORY_URL)
+                                .desired_width(ui.available_width()),
+                        );
                         if ui
                             .add_enabled(
                                 !self.run_state.active() && self.inventory_rx.is_none(),
                                 egui::Button::new(if self.inventory_rx.is_some() {
                                     "正在更新…"
                                 } else {
-                                    "从 GitHub 更新清单"
+                                    "从 HTTPS 地址更新清单"
                                 })
                                 .min_size(egui::vec2(ui.available_width(), 36.0)),
                             )
                             .clicked()
                         {
                             self.refresh_inventory();
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.run_state.active() && self.inventory_rx.is_none(),
+                                egui::Button::new("恢复默认清单地址"),
+                            )
+                            .clicked()
+                        {
+                            self.inventory_source_url = DEFAULT_INVENTORY_URL.to_string();
+                        }
+                        if self.inventory_cancellation.is_some()
+                            && ui.button("取消清单更新").clicked()
+                        {
+                            if let Some(cancellation) = &self.inventory_cancellation {
+                                cancellation.cancel();
+                            }
+                            self.push_log(LogLevel::Warn, "已请求取消清单更新；保留原清单。");
+                        }
+                        ui.add_enabled(
+                            !self.run_state.active() && self.inventory_rx.is_none(),
+                            egui::TextEdit::singleline(&mut self.inventory_file_path)
+                                .hint_text(r"D:\macos_inventory.json")
+                                .desired_width(ui.available_width()),
+                        );
+                        if ui
+                            .add_enabled(
+                                !self.run_state.active() && self.inventory_rx.is_none(),
+                                egui::Button::new("导入本地 JSON 清单")
+                                    .min_size(egui::vec2(ui.available_width(), 36.0)),
+                            )
+                            .clicked()
+                        {
+                            self.import_inventory_file();
                         }
                         egui::CollapsingHeader::new("高级配置与导出")
                             .default_open(false)
@@ -1275,5 +1374,27 @@ fn export_path(file_name: &str) -> PathBuf {
         desktop.join(file_name)
     } else {
         home.join(file_name)
+    }
+}
+
+fn load_inventory_source_url() -> (String, Option<String>) {
+    match std::fs::read_to_string(MacosInventory::source_url_path()) {
+        Ok(url) => {
+            let url = url.trim().to_string();
+            match MacosInventory::validate_inventory_url(&url) {
+                Ok(()) => (url, None),
+                Err(error) => (
+                    DEFAULT_INVENTORY_URL.to_string(),
+                    Some(format!("已保存的清单地址无效，已恢复默认地址：{error}")),
+                ),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (DEFAULT_INVENTORY_URL.to_string(), None)
+        }
+        Err(error) => (
+            DEFAULT_INVENTORY_URL.to_string(),
+            Some(format!("读取清单地址配置失败，已使用默认地址：{error}")),
+        ),
     }
 }
