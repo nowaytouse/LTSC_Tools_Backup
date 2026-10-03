@@ -14,7 +14,7 @@ cargo run --bin macos_inventory -- --sync
 
 程序会先快进拉取、采集工具、校验 Windows 映射，再仅提交清单并推送；采集不完整、出现未映射工具、工作区不干净或远端不同步都会报错停止。普通采集命令仍可用于本地预览，不会自动推送。清单只保留工具名称，不记录用户名、路径或私有 tap。
 
-Windows 清单来源支持以下方式（本次新增功能需使用包含这些修改的新构建，仓库内现有 `.exe` 尚未更新）：
+Windows 清单来源支持以下方式（根目录 `.exe` 已替换为源提交 `3fd48ac` 的成功 CI 产物；后续源码改动不代表这个产物也已更新）：
 
 - 默认先访问 GitHub Raw；连接失败或清单内容无效时，自动通过 [GitHub Contents API](https://docs.github.com/en/rest/repos/contents#get-repository-content) 获取同一份清单。**每个来源**连接最多 8 秒、下载最多 20 秒，外层进程等待上限 25 秒；不是两次尝试合计 25 秒。只允许 HTTPS 重定向，不降低证书验证。
 - 可填写可访问的 HTTPS 清单地址。自定义来源只使用该地址，不会再切换到官方来源；点击更新后地址保存在 `%LOCALAPPDATA%\LTSCWorkspace\inventory_source_url.txt`，清单缓存位于同目录。
@@ -37,6 +37,8 @@ Windows 清单来源支持以下方式（本次新增功能需使用包含这些
 ## 维护与验证
 
 改动记录见 [Changelog](Docs/CHANGELOG.md)，包含尚未发布的修改及适用限制。
+
+代码与交付规范见 [AGENTS.md](AGENTS.md)。当前程序来源、文件摘要、已验证范围和 LTSC 试用步骤见 [Windows 验证状态](Docs/READINESS.md)；工具名称同步不等于 HEAD/nightly 版本或 FFmpeg 编译选项完全一致。
 
 工具映射位于 [parity_rules.json](src/assets/parity_rules.json)，可安装清单位于 [setup_profile.json](src/assets/setup_profile.json)。Windows CI 会运行单元测试、Rust 静态检查、在线软件源审计，并生成 x64 发布程序；CI 产物通过后才应替换仓库根目录的 `.exe`。macOS 上的交叉编译只能证明 Windows 代码可编译，不能代替真实 LTSC 2019/2021/2024 的安装与回滚验收。
 

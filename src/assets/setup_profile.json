@@ -5,16 +5,18 @@
     "author": "nowaytouse",
     "description": "Personal Windows LTSC profile synchronized from this Mac and executed by the cancellable Rust-native orchestrator.",
     "source_host_snapshot": {
-      "captured_at": "2026-09-25",
-      "homebrew_formulae": 110,
-      "homebrew_casks": 14,
+      "captured_at": "2026-10-03T18:43:21Z",
+      "homebrew_formulae": 112,
+      "homebrew_casks": 13,
       "policy": "Map verified Windows equivalents; skip macOS-only packages."
     },
     "provider_audit": {
       "captured_at": "2026-09-25",
-      "winget_manifest_ids_verified": 34,
-      "scoop_manifests_verified": 88,
+      "updated_at": "2026-10-04",
+      "winget_manifest_ids_verified": 36,
+      "scoop_manifests_verified": 89,
       "microsoft_store_product_ids_verified": 6,
+      "verification_scope": "Existing WinGet/Scoop catalog passed CI 37089825898; added LLVM.LLVM, suzuki-shunsuke.pinact and gradle were checked against official manifests on 2026-10-04, not installed on LTSC. Store product evidence retains its original capture date.",
       "policy": "Use exact IDs from official provider repositories; omit unavailable mappings."
     }
   },
@@ -103,9 +105,11 @@
       { "id": "LibreWolf.LibreWolf", "name": "LibreWolf Privacy Browser" },
       { "id": "Bitwarden.CLI", "name": "Bitwarden CLI" },
       { "id": "Bitwarden.Bitwarden", "name": "Bitwarden Desktop" },
+      { "id": "LLVM.LLVM", "name": "LLVM Toolchain (LLD)" },
       { "id": "LocalSend.LocalSend", "name": "LocalSend File Transfer" },
       { "id": "GnuPG.Gpg4win", "name": "Gpg4win Security Suite" },
       { "id": "Microsoft.OpenJDK.21", "name": "Microsoft OpenJDK 21" },
+      { "id": "suzuki-shunsuke.pinact", "name": "pinact GitHub Actions Pinning" },
       { "id": "Microsoft.PowerShell", "name": "PowerShell 7" },
       { "id": "CondaForge.Miniforge3", "name": "Miniforge 3" },
       { "id": "EFF.Certbot", "name": "Certbot SSL Tool" },
@@ -123,7 +127,7 @@
     "scoop_tools": [
       "gh", "git-lfs", "restic", "chezmoi", "atuin", "direnv", "starship", "fastfetch",
       "python", "nodejs-lts", "go", "zig", "deno", "fnm", "bun", "pnpm", "neovim", "mise", "zoxide",
-      "cmake", "ninja", "nasm", "yasm", "sccache", "just", "mold", "gcc",
+      "cmake", "ninja", "gradle", "nasm", "yasm", "sccache", "just", "mold", "gcc",
       "ripgrep", "fd", "fzf", "bat", "eza", "topgrade", "jdupes", "b3sum", "xxhash",
       "actionlint", "shellcheck", "shfmt", "doxygen", "grype", "osv-scanner",
       "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract", "mpv",
@@ -147,7 +151,7 @@
       "@anthropic-ai/claude-code", "@alibaba-group/open-code-review", "@diff4/cli",
       "acp-ts", "context-mode", "lodash", "openclaw", "opencode-ai",
       "pyright", "run-deepseek-cli", "typescript", "typescript-language-server",
-      "uipro-cli", "prettier", "markdownlint-cli2", "node-gyp", "npm",
+      "ui-ux-pro-max-cli", "prettier", "markdownlint-cli2", "node-gyp", "npm",
       "@openai/codex", "repomix", "@moonshot-ai/kimi-code", "@kilocode/cli"
     ],
     "pip_packages": [

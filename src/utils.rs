@@ -338,7 +338,11 @@ fn command_with_tool_paths(program: &str) -> Command {
         std::env::var_os("LOCALAPPDATA"),
         &["Programs", "cursor", "resources", "app", "bin"],
     );
-    add(std::env::var_os("USERPROFILE"), &["scoop", "shims"]);
+    let scoop_root = std::env::var_os("SCOOP");
+    let user_profile = std::env::var_os("USERPROFILE");
+    if let Some(shims) = scoop_shims_path(scoop_root.as_deref(), user_profile.as_deref()) {
+        add(Some(shims.into_os_string()), &[]);
+    }
     add(std::env::var_os("USERPROFILE"), &[".cargo", "bin"]);
     add(std::env::var_os("USERPROFILE"), &[".local", "bin"]);
     add(std::env::var_os("APPDATA"), &["npm"]);
@@ -354,6 +358,17 @@ fn command_with_tool_paths(program: &str) -> Command {
         command.env("PATH", path);
     }
     command
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn scoop_shims_path(
+    scoop_root: Option<&std::ffi::OsStr>,
+    user_profile: Option<&std::ffi::OsStr>,
+) -> Option<std::path::PathBuf> {
+    scoop_root
+        .map(std::path::PathBuf::from)
+        .or_else(|| user_profile.map(|profile| std::path::PathBuf::from(profile).join("scoop")))
+        .map(|root| root.join("shims"))
 }
 
 pub fn update_managed_block(
@@ -467,8 +482,8 @@ pub fn upsert_ini_values(
 #[cfg(test)]
 mod tests {
     use super::{
-        run_native_cmd_timeout, update_managed_block, upsert_ini_values, CancellationToken,
-        CommandState,
+        run_native_cmd_timeout, scoop_shims_path, update_managed_block, upsert_ini_values,
+        CancellationToken, CommandState,
     };
     use std::time::{Duration, SystemTime};
 
@@ -522,6 +537,29 @@ mod tests {
         let result = worker.join().unwrap();
 
         assert_eq!(result.state, CommandState::Cancelled);
+    }
+
+    #[test]
+    fn scoop_shims_path_uses_custom_root_and_default_user_root() {
+        use std::ffi::OsStr;
+        use std::path::Path;
+
+        assert_eq!(
+            scoop_shims_path(
+                Some(OsStr::new("/portable/scoop")),
+                Some(OsStr::new("/home/user"))
+            ),
+            Some(Path::new("/portable/scoop").join("shims"))
+        );
+        assert_eq!(
+            scoop_shims_path(None, Some(OsStr::new("/home/user"))),
+            Some(Path::new("/home/user").join("scoop").join("shims"))
+        );
+        assert_eq!(
+            scoop_shims_path(Some(OsStr::new("")), Some(OsStr::new("/home/user"))),
+            Some(Path::new("shims").to_path_buf())
+        );
+        assert_eq!(scoop_shims_path(None, None), None);
     }
 
     #[test]

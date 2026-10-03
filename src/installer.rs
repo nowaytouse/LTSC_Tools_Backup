@@ -112,6 +112,23 @@ struct ManagerAvailability {
     scoop: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScoopGitAction {
+    UseExisting,
+    InstallWithWinget,
+    WingetRequired,
+}
+
+fn scoop_git_action(git_available: bool, winget_available: bool) -> ScoopGitAction {
+    if git_available {
+        ScoopGitAction::UseExisting
+    } else if winget_available {
+        ScoopGitAction::InstallWithWinget
+    } else {
+        ScoopGitAction::WingetRequired
+    }
+}
+
 pub struct SetupEngine {
     tx: Sender<SetupEvent>,
     config: SetupConfig,
@@ -794,28 +811,63 @@ impl SetupEngine {
         if self.stopped() {
             return false;
         }
-        if !winget_available {
-            self.log(
-                LogLevel::Error,
-                "Scoop 引导需要 Git，但 WinGet 不可用，已停止该提供程序。",
-            );
-            return false;
-        }
-
         self.log(
             LogLevel::Info,
             "Scoop 未安装；Rust 将直接部署官方仓库与 shim，不执行远程安装脚本。",
         );
-        if !self.install_winget_app("Git.Git", "Git") {
-            self.log(LogLevel::Error, "无法安装 Git，Scoop 引导已停止。");
-            return false;
+        let git_probe = self.command("git", &["--version"], 30);
+        match &git_probe.state {
+            CommandState::Cancelled => {
+                self.stopped();
+                return false;
+            }
+            CommandState::TimedOut | CommandState::WaitFailed => {
+                self.log(
+                    LogLevel::Error,
+                    format!("Git 状态检查未正常完成：{}", git_probe.diagnostic()),
+                );
+                return false;
+            }
+            CommandState::Exited if !git_probe.succeeded() => {
+                self.log(
+                    LogLevel::Error,
+                    format!("Git 已启动但版本检查失败：{}", git_probe.diagnostic()),
+                );
+                return false;
+            }
+            CommandState::Exited | CommandState::SpawnFailed => {}
         }
-        if !self.command("git", &["--version"], 30).succeeded() {
-            self.log(
-                LogLevel::Error,
-                "Git 安装完成但当前进程仍无法解析 git.exe；请重启后重试。",
-            );
-            return false;
+        let git_available = git_probe.succeeded();
+        match scoop_git_action(git_available, winget_available) {
+            ScoopGitAction::UseExisting => {
+                self.log(LogLevel::Ok, "Scoop 引导使用现有 Git。");
+            }
+            ScoopGitAction::InstallWithWinget => {
+                if !self.install_winget_app("Git.Git", "Git") {
+                    if !self.stopped() {
+                        self.log(LogLevel::Error, "无法安装 Git，Scoop 引导已停止。");
+                    }
+                    return false;
+                }
+                if !self.command("git", &["--version"], 30).succeeded() {
+                    if !self.stopped() {
+                        self.log(
+                            LogLevel::Error,
+                            "Git 安装完成但当前进程仍无法解析 git.exe；请重启后重试。",
+                        );
+                    }
+                    return false;
+                }
+            }
+            ScoopGitAction::WingetRequired => {
+                if !self.stopped() {
+                    self.log(
+                        LogLevel::Error,
+                        "Scoop 引导需要 Git；未发现 Git 且 WinGet 不可用，已停止该提供程序。",
+                    );
+                }
+                return false;
+            }
         }
 
         let home = user_home();
@@ -2304,7 +2356,7 @@ mod tests {
     use super::{
         extract_guid, item_progress, merge_json_value, package_is_listed,
         parse_disable_delete_notify, python_package_is_listed, run_setup_worker,
-        scoop_bucket_is_listed, SetupEvent, SetupOutcome,
+        scoop_bucket_is_listed, scoop_git_action, ScoopGitAction, SetupEvent, SetupOutcome,
     };
     use crate::config::SetupConfig;
     use crate::utils::CancellationToken;
@@ -2325,6 +2377,19 @@ mod tests {
             "Name Source\nmain https://github.com/ScoopInstaller/Main",
             "main"
         ));
+    }
+
+    #[test]
+    fn scoop_uses_existing_git_without_winget_and_only_requires_winget_to_install_git() {
+        assert_eq!(scoop_git_action(true, false), ScoopGitAction::UseExisting);
+        assert_eq!(
+            scoop_git_action(false, true),
+            ScoopGitAction::InstallWithWinget
+        );
+        assert_eq!(
+            scoop_git_action(false, false),
+            ScoopGitAction::WingetRequired
+        );
     }
 
     #[test]

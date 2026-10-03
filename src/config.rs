@@ -290,6 +290,9 @@ impl SetupProfile {
         if selected.iter().any(|key| key.starts_with("Scoop:")) {
             selected.insert(package_key(ParityProvider::Winget, "Git.Git"));
         }
+        if selected.contains(&package_key(ParityProvider::Scoop, "gradle")) {
+            selected.insert(package_key(ParityProvider::Winget, "Microsoft.OpenJDK.21"));
+        }
 
         let packages = &self.packages;
         let selected_strings = |provider, values: &Vec<String>| {
@@ -317,6 +320,7 @@ impl SetupProfile {
         for required in [
             (ParityProvider::Winget, "Rustlang.Rustup"),
             (ParityProvider::Winget, "Git.Git"),
+            (ParityProvider::Winget, "Microsoft.OpenJDK.21"),
             (ParityProvider::Scoop, "nodejs-lts"),
             (ParityProvider::Scoop, "python"),
             (ParityProvider::Scoop, "uv"),
@@ -712,6 +716,30 @@ mod tests {
             profile.packages.npm_globals.len()
                 < SetupProfile::load_default().packages.npm_globals.len()
         );
+    }
+
+    #[test]
+    fn gradle_runtime_and_ui_cli_alias_are_selected_without_conflicts() {
+        let profile = SetupProfile::load_default();
+        let mut inventory = crate::inventory::MacosInventory {
+            schema_version: 1,
+            homebrew_formulae: vec!["gradle".into()],
+            ..Default::default()
+        };
+        let plan = profile.packages_for_inventory(&inventory).unwrap();
+        assert!(plan
+            .winget_dev
+            .iter()
+            .any(|app| app.id == "Microsoft.OpenJDK.21"));
+
+        inventory.homebrew_formulae.clear();
+        inventory.npm_globals = vec!["uipro-cli".into(), "ui-ux-pro-max-cli".into()];
+        let plan = profile.packages_for_inventory(&inventory).unwrap();
+        assert_eq!(plan.npm_globals, ["ui-ux-pro-max-cli"]);
+        assert!(!plan
+            .winget_dev
+            .iter()
+            .any(|app| app.id == "Microsoft.OpenJDK.21"));
     }
 
     #[test]

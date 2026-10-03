@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-10-01T13:55:55Z",
+  "captured_at": "2026-10-03T18:43:21Z",
   "homebrew_formulae": [
     "actionlint",
     "apngasm",
@@ -14,6 +14,7 @@
     "chezmoi",
     "cmake",
     "coreutils",
+    "crane",
     "czkawka",
     "direnv",
     "docbook-xsl",
@@ -24,7 +25,6 @@
     "exiftool",
     "exiv2",
     "fastfetch",
-    "fdk-aac",
     "fdupes",
     "fish",
     "flite",
@@ -40,6 +40,7 @@
     "go",
     "gobject-introspection",
     "gpac",
+    "gradle",
     "grype",
     "hdr10plus_tool",
     "helm",
@@ -53,6 +54,8 @@
     "kondo",
     "krew",
     "lean-ctx",
+    "libngtcp2",
+    "lld@21",
     "lychee",
     "markdownlint-cli2",
     "mas",
@@ -68,13 +71,13 @@
     "nextdns",
     "ollama",
     "opencv",
-    "openjdk",
     "osv-scanner",
     "p7zip",
     "pandoc",
     "parallel",
     "pgvector",
     "pipx",
+    "pinact",
     "pngcheck",
     "pngquant",
     "postgresql@17",
@@ -161,7 +164,8 @@
   ],
   "npm_globals": [
     "corepack",
-    "npm"
+    "npm",
+    "ui-ux-pro-max-cli"
   ],
   "uv_tools": [
     "osxphotos",
