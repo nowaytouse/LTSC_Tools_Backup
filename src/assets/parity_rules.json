@@ -25,6 +25,7 @@
     { "source_kind": "formula", "source": "hdr10plus_tool", "provider": "manual", "target": "hdr10plus_tool Windows build", "reason": "暂无经过验证的 WinGet/Scoop 清单" },
     { "source_kind": "formula", "source": "ipsw", "provider": "manual", "target": "blacktop/ipsw", "reason": "上游提供 Windows 版但需额外 Scoop bucket，尚未纳入受控包源" },
     { "source_kind": "formula", "source": "jpeginfo", "provider": "wsl", "target": "jpeginfo", "reason": "Windows 原生包源暂无经过验证的清单" },
+    { "source_kind": "formula", "source": "jhead", "provider": "manual", "target": "https://github.com/Matthias-Wandel/jhead", "reason": "Scoop 于 2026-10-05 撤销失效下载清单；上游 Windows 路径为 Visual C++ 2022 + make.bat 源码构建，需手动处理，不计作已安装" },
     { "source_kind": "formula", "source": "kilo", "provider": "npm", "target": "@kilocode/cli", "reason": "上游提供跨平台 NPM CLI" },
     { "source_kind": "formula", "source": "kimi-code", "provider": "npm", "target": "@moonshot-ai/kimi-code", "reason": "使用新 Kimi Code CLI，不安装已停更的 kimi-cli" },
     { "source_kind": "formula", "source": "libngtcp2", "provider": "manual", "target": "vcpkg ngtcp2 library port", "reason": "Microsoft vcpkg 提供 Windows 构建；这是供项目链接的 C 库而非独立 CLI" },

@@ -2,6 +2,12 @@
 
 核查日期：2026-10-04。当前状态是**已有通过 CI 的 Windows 试用程序，但尚未完成真实 LTSC 设备验收**，不宣称“全部完善”或“任何 LTSC 都即拿即用”。
 
+## 2026-10-13 软件源审计修复
+
+[CI 38240426878](https://github.com/nowaytouse/LTSC_Tools_Backup/actions/runs/38240426878) 的唯一失败项为 Scoop `jhead`，三个候选清单均返回 404。官方在 [2026-10-05 撤销该清单](https://github.com/ScoopInstaller/Main/commit/b013317d258c42bb7a06671c2421c0ed14b4cb0f)，不是本项目 raw 下载回退失效。
+
+Mac 清单继续保留 `jhead`；Windows 明确列为手动源码构建项。[上游说明](https://github.com/Matthias-Wandel/jhead/blob/master/readme.txt) 使用 Visual C++ 2022 和 `make.bat`，未核验任何可自动安装的 Windows 发布归档。它不计作已安装，也没有用 ExifTool 冒充等价实现。此次映射修复尚未进入下述根目录 EXE；修复后的新 CI 和真实 LTSC 构建运行仍待验证。
+
 ## 已确认的产物
 
 根目录 `ltsc_setup_gui.exe` 来自 [CI 37089825898](https://github.com/nowaytouse/LTSC_Tools_Backup/actions/runs/37089825898)，而不是在 Mac 上构建的程序。
@@ -32,7 +38,7 @@
 
 ## 本机工具刷新
 
-本次重新采集 160 项工具，覆盖 112 个 Homebrew formula、13 个 cask、29 个 Cargo、3 个 NPM 与 3 个 UV 工具。名称级映射中有 116 项自动、8 项内置/替代、9 项 Mac 专属和 27 项手动，没有未映射项；**手动项不等于已经安装**。
+2026-10-04 重新采集 160 项工具，覆盖 112 个 Homebrew formula、13 个 cask、29 个 Cargo、3 个 NPM 与 3 个 UV 工具。2026-10-13 调整 `jhead` 后，名称级映射中有 115 项自动、8 项内置/替代、9 项 Mac 专属和 28 项手动，没有未映射项；**手动项不等于已经安装**。
 
 新增 `crane`、`gradle`、`libngtcp2`、`lld@21`、`pinact`、`ui-ux-pro-max-cli`。Gradle 的安装计划包含 OpenJDK，LLD 使用 Windows LLVM 工具链而非保证固定 21 主版本；Crane 与 ngtcp2 库暂不自动安装。VS Code CLI 不可用，沿用旧扩展清单并保留警告，未宣称该来源采集完整。没有对本机执行工具升级或修改包管理器配置。
 

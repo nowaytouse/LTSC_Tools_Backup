@@ -743,6 +743,28 @@ mod tests {
     }
 
     #[test]
+    fn retired_scoop_jhead_remains_a_visible_manual_item() {
+        let profile = SetupProfile::load_default();
+        let inventory = crate::inventory::MacosInventory {
+            schema_version: 1,
+            homebrew_formulae: vec!["jhead".into()],
+            ..Default::default()
+        };
+        let report = profile.parity_report(&inventory).unwrap();
+        assert_eq!(report.automatic, 0);
+        assert_eq!(report.covered(), 1);
+        assert!(report.unmapped.is_empty());
+        assert_eq!(report.manual.len(), 1);
+        assert!(report.manual[0].contains("jhead"));
+        assert!(!profile
+            .packages_for_inventory(&inventory)
+            .unwrap()
+            .scoop_tools
+            .iter()
+            .any(|package| package == "jhead"));
+    }
+
+    #[test]
     fn wsl_equivalents_are_not_counted_as_installed() {
         let profile = SetupProfile::load_default();
         let mut inventory = crate::inventory::MacosInventory::load_embedded().unwrap();

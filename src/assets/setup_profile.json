@@ -12,11 +12,11 @@
     },
     "provider_audit": {
       "captured_at": "2026-09-25",
-      "updated_at": "2026-10-04",
+      "updated_at": "2026-10-13",
       "winget_manifest_ids_verified": 36,
-      "scoop_manifests_verified": 89,
+      "scoop_manifests_verified": 88,
       "microsoft_store_product_ids_verified": 6,
-      "verification_scope": "Existing WinGet/Scoop catalog passed CI 37089825898; added LLVM.LLVM, suzuki-shunsuke.pinact and gradle were checked against official manifests on 2026-10-04, not installed on LTSC. Store product evidence retains its original capture date.",
+      "verification_scope": "Existing WinGet/Scoop catalog passed CI 37089825898; added LLVM.LLVM, suzuki-shunsuke.pinact and gradle were checked against official manifests on 2026-10-04. Scoop retired jhead on 2026-10-05; it is now an explicit manual source-build item, not a verified Scoop install. Store product evidence retains its original capture date. No LTSC installation is claimed.",
       "policy": "Use exact IDs from official provider repositories; omit unavailable mappings."
     }
   },
@@ -131,7 +131,7 @@
       "ripgrep", "fd", "fzf", "bat", "eza", "topgrade", "jdupes", "b3sum", "xxhash",
       "actionlint", "shellcheck", "shfmt", "doxygen", "grype", "osv-scanner",
       "ffmpeg", "imagemagick", "exiftool", "yt-dlp", "gallery-dl", "transmission-cli", "poppler", "tesseract", "mpv",
-      "apngasm", "czkawka", "dovi-tool", "gifsicle", "gifski", "git-filter-repo", "gpac", "helm", "jhead",
+      "apngasm", "czkawka", "dovi-tool", "gifsicle", "gifski", "git-filter-repo", "gpac", "helm",
       "lychee", "mediainfo", "meson", "pandoc", "pipx", "pngquant", "pyenv", "ruby", "taplo", "tealdeer", "volta",
       "aria2", "wget", "lz4", "zstd", "xz", "brotli", "sqlite", "postgresql", "uv",
       "krew", "uutils-coreutils", "libvips",
